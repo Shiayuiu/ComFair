@@ -1,1 +1,3 @@
 # Intersectional_Fairness_alpha
+
+本代码仓库用于存储以Intersectional_Fairness为主题的调研结果，code和工作流（暂定）
