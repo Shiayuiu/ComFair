@@ -1,0 +1,36 @@
+# 数据规范
+dataset:
+  name: "adult_census"
+  source: "folktables"  # 必须指定合规来源！
+  raw_path: "data/raw/adult.data"
+  # 严格隔离的存储路径
+  features_path: "data/processed/adult_features.csv"  # 仅任务特征
+  metadata_path: "data/processed/adult_metadata.csv"  # 仅sample_id+属性
+
+# 敏感属性定义（必须分箱！）
+sensitive_attributes:
+  - name: "age_bin"
+    type: "binned"
+    source_column: "age"
+    bins: [0, 25, 45, 65, 100]  # 学术验证的分箱
+    labels: ["<25", "25-44", "45-64", "65+"]
+  - name: "gender"
+    type: "categorical"
+    source_column: "sex"
+    mapping: {"Male": "M", "Female": "F"}  # 标准化值
+  - name: "race"
+    type: "categorical"
+    source_column: "race"
+    values: ["White", "Black", "Asian", "Other"]  # 合并稀疏类别
+
+# 任务规范
+task:
+  type: "binary_classification"
+  label_column: "income"
+  positive_label: ">50K"
+
+# 评估约束
+evaluation:
+  min_group_size: 50  # 严格阈值：n≥50（中心极限定理要求）
+  fairness_threshold: 0.05  # 最大允许gap
+  metrics: ["accuracy", "equalized_odds", "auc"]
