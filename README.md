@@ -19,6 +19,7 @@ Opencompass的框架：数据集、模型（开源、闭源）接口；对于生
 目前已经实现的指标在src/metrics/目录下的Intersectional.py文件中,对于需要query查询的指标目前正在本地测试pipeline。
 
 仓库结构；
+
 ```
 code/
 ├── configs/
@@ -50,4 +51,32 @@ code/
 ├── run_gen.py                  # 生成预测 A
 ├── run_eval.py                 # 交叉公平性评估 B 
 └── run_full.py                 # 全流程评估 A+B
+```
+
+**一、分类任务上**
+
+我们采用如下的方法评估模型在数据集A上的表现：
+
+假定A中有若干表项的集合X，对于X中的每一个x_i，其有若干属性a_j，通过设计Prompt，我们将x_i的这些敏感属性传入给模型，通过一个二分类预测任务，得到模型的预测y_pred，然后我们将y_pred、y_real和原先的表项x写入一个新表格，并将这个表格作为中间结果保存。
+
+此时我们的表格中每一个表项应当遵循如下的格式：
+
+```
+x:{a_1:value_1,a_2:value_2,...,a_n:value_n,y_pred,y_real}
+```
+
+我们使用如下的query方式查询模型在一个敏感属性集合S:{a_j1,a_j2,...,a_jn}上的交叉公平性：
+
+```
+Query:{a_j1,a_j2,a_j3}
+Methods:DF等
+Result: epsilon等
+```
+
+1\. 属性名的对齐
+
+我们将常见的敏感属性对齐到如下的集合上，以确保最小化更换数据集时Query修改的复杂程度。
+
+```
+{gender, age_group, race, work_class, edu_level, ...}
 ```
