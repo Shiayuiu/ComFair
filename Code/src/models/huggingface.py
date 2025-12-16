@@ -8,7 +8,7 @@ class HFModelWrapper:
         print(f"Loading HF Model from: {model_path}...")
         
         # 根据需要配置量化等参数
-        model_kwargs = {"torch_dtype": torch.bfloat16}
+        model_kwargs = {"dtype": torch.bfloat16}
         if load_in_4bit:
             model_kwargs["load_in_4bit"] = True
             
@@ -20,6 +20,8 @@ class HFModelWrapper:
             tokenizer=model_path    # 通常 tokenizer 和 model 路径一致
         )
         self.tokenizer = self.pipe.tokenizer
+        self.tokenizer.padding_side = 'left'
+
 
     def predict_batch(self, prompts: List[str], max_new_tokens=10) -> List[str]:
         """

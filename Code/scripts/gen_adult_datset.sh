@@ -2,7 +2,7 @@
 
 # --- 配置区域 ---
 # 设置显卡 (可选)
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=1
 
 # 数据集路径
 RAW_DATA_PATH="./data/raw/adult.csv"
@@ -10,6 +10,7 @@ RAW_DATA_PATH="./data/raw/adult.csv"
 # 模型路径 (可以是 HuggingFace ID，也可以是绝对路径)
 
 # MODEL_PATH="Qwen/Qwen2.5-1.5B-Instruct" 
+# your model path
 MODEL_PATH="/zhdd/home/yfwu/model/Qwen2.5-1.5B-Instruct/"
 
 # 任务参数

@@ -1,12 +1,14 @@
 # run_gen.py
+import re
 import argparse
 import pandas as pd
 import os
 import time
-from configs.adult import dataset_config  # 导入配置
+#from configs.adult import dataset_config
+from configs import get_dataset_config # Dynamic Import
 from src.models.huggingface import HFModelWrapper
 
-def parse_response(response_text: str, label_map: dict) -> int:
+def parse_response_backup(response_text: str, label_map: dict) -> int:
     """
     简单解析器，将模型输出映射为 0 或 1。
     如果无法解析，返回 -1
@@ -25,8 +27,46 @@ def parse_response(response_text: str, label_map: dict) -> int:
             
     return -1 # 解析失败
 
+def parse_response(response_text: str, label_map: dict) -> int:
+    """
+    鲁棒的解析器：优先匹配开头的单个字母，防止匹配到解释文本中的字符。
+    """
+    if not response_text:
+        return -1
+    
+    text = response_text.strip().upper()
+
+    # 策略 1 (最优先)：直接提取第一个“单词”进行匹配
+    # 能够解决 "B\n\nExplanation..." 或 "A." 或 "A," 的情况
+    # 按空白字符切分，取第一个
+    first_token = text.split()[0]
+    
+    # 去除单词末尾的标点 (例如 "A." -> "A", "B," -> "B")
+    clean_token = re.sub(r"[^\w]", "", first_token)
+    
+    if clean_token in label_map:
+        return label_map[clean_token]
+
+    # 策略 2 (备选)：如果开头是 "Answer: A" 这种格式
+    # 使用正则寻找独立的 "A" 或 "B"
+    for key, val in label_map.items():
+        # 正则逻辑：
+        # (?:^|\s)  : 前面必须是 开头 或者 空格/换行
+        # key       : 匹配 A 或 B
+        # (?:\.|,|$|\s): 后面必须是 标点、结尾 或者 空格
+        # 这样可以防止匹配到 "Apple" 中的 "A" 或 "Label" 中的 "B"
+        pattern = fr"(?:^|\s|:){key}(?:\.|,|$|\s)"
+        if re.search(pattern, text):
+            return val
+            
+    return -1 # 解析失败
+
 def main(args):
+    
     # 1. 准备配置和路径
+    print(f"Loading configuration for dataset: {args.dataset}")
+    dataset_config = get_dataset_config(args.dataset) # 关键修改
+
     output_dir = "data/results/predictions"
     os.makedirs(output_dir, exist_ok=True)
     timestamp = time.strftime("%Y%m%d-%H%M%S")

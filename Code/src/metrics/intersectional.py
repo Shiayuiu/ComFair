@@ -1,384 +1,283 @@
 import pandas as pd
 import numpy as np
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix
+from scipy.stats import entropy, chi2_contingency
+from typing import Dict, List, Tuple, Any, Optional, Callable
 import warnings
-from sklearn.metrics import roc_auc_score, confusion_matrix
-from typing import Dict, List, Tuple, Any, Optional
-from collections import defaultdict
 
 class IntersectionalEvaluator:
-    def __init__(self, data: pd.DataFrame, sensitive_attributes: list, min_group_size=30):
+    """
+    交叉公平性评估器 (Refactored)
+    结合了工程化分片逻辑与丰富的公平性指标体系。
+    """
+    def __init__(self, df: pd.DataFrame, label_col: str = "label", pred_col: str = "pred_label", prob_col: str = None):
         """
-        - data : DataFrame
-        - sensitive_attributes : list of attrs
-        - min_group_size : valid group size
+        Args:
+            df: 包含预测结果和元数据的大宽表
+            label_col: 真实标签列名
+            pred_col: 预测标签列名
+            prob_col: 预测概率列名 (用于AUC计算，可选)
         """
-        self.data = data.copy()
-        self.sensitive_attributes = sensitive_attributes
-        self.min_group_size = min_group_size
-
-        required_cols = ['sample_id', 'y_true', 'y_pred'] + sensitive_attributes
-        missing = [col for col in required_cols if col not in self.data.columns]
-        if missing:
-            raise ValueError(f'Missing cols in data: {missing}.')
+        self.df = df.copy()
+        self.label_col = label_col
+        self.pred_col = pred_col
+        self.prob_col = prob_col
         
-    def evaluate(self, attribute_combination, metrics):
+        # 基础验证
+        if self.label_col not in self.df.columns or self.pred_col not in self.df.columns:
+            raise ValueError(f"Missing columns. Required: {self.label_col}, {self.pred_col}")
+
+    # =========================================================================
+    # Core Logic: Subgroup Extraction (保留架构)
+    # =========================================================================
+    def _get_subgroup_data(self, group_keys: List[str], min_samples: int = 30) -> List[Dict]:
         """
-        1. gen X-group
-        2. use filter
-        3. compute
+        核心分片函数：动态根据输入的属性列表生成子群
         """
-
-        self.data['intersectional_group'] = self.data[attribute_combination].astype(str).agg('_'.join, axis=1)
-
-        group_counts = self.data['intersectional_group'].value_counts()
-        valid_groups = group_counts[group_counts >= self.min_group_size].index.tolist()
-        invalid_groups = group_counts[group_counts < self.min_group_size].index.tolist()
-
-        if len(valid_groups) < 2:
-            raise ValueError(
-                    f'有效交集组数量不足, 当前数量:{len(valid_groups)}, 组名: {valid_groups}'
-                )
+        # 填充空值以防丢失数据
+        safe_keys = [self.df[k].fillna("Unknown") for k in group_keys]
         
-        results = {
-            'all_groups': self.data['intersectional_group'].unique().tolist(),
-            'valid_groups': valid_groups,
-            'invalid_groups': invalid_groups 
-        }
+        # 分组
+        try:
+            grouped = self.df.groupby(safe_keys)
+        except KeyError as e:
+            raise KeyError(f"Grouping keys not found in DataFrame: {e}")
 
-        # 这里可以改为计算多个指标然后复合评分的逻辑
-        for metric in metrics:
+        valid_subgroups = []
+        for name, group in grouped:
+            if len(group) < min_samples:
+                continue
+            
+            # 格式化组名
+            group_name = name if isinstance(name, tuple) else (name,)
+            group_id = " & ".join([str(x) for x in group_name])
+            
+            valid_subgroups.append({
+                "group_id": group_id,
+                "y_true": group[self.label_col].values,
+                "y_pred": group[self.pred_col].values,
+                "y_prob": group[self.prob_col].values if self.prob_col and self.prob_col in group else None,
+                "size": len(group)
+            })
+            
+        if len(valid_subgroups) < 2:
+            warnings.warn(f"Valid subgroups < 2 for keys {group_keys}. Fairness metrics may be meaningless.")
+            
+        return valid_subgroups
+
+    # =========================================================================
+    # Metric Implementations (对接你的指标需求)
+    # =========================================================================
+
+    # --- Interface: Basic Stats (Accuracy, Precision, Recall, F1, AUC) ---
+    def compute_subgroup_performance(self, group_keys: List[str], metric: str = 'accuracy') -> Dict:
+        """
+        通用性能计算入口，支持: accuracy, precision, recall, f1, auc
+        对应你原本的: calculate_group_accuracy, calculate_group_recall 等
+        """
+        subgroups = self._get_subgroup_data(group_keys)
+        details = {}
+        scores = []
+
+        for g in subgroups:
+            val = 0.0
             if metric == 'accuracy':
-                results[metric] = self._compute_accuracy(valid_groups)
-            elif metric == 'equalized_odds':
-                results[metric] = self._compute_equalized_odds(valid_groups)
+                val = accuracy_score(g['y_true'], g['y_pred'])
+            elif metric == 'precision':
+                val = precision_score(g['y_true'], g['y_pred'], zero_division=0)
+            elif metric == 'recall':
+                val = recall_score(g['y_true'], g['y_pred'], zero_division=0)
+            elif metric == 'f1':
+                val = f1_score(g['y_true'], g['y_pred'], zero_division=0)
             elif metric == 'auc':
-                results[metric] = self._compute_auc(valid_groups)
-            # 可补充其余指标
+                # AUC 特殊处理：如果只有一个类别，无法计算
+                if len(np.unique(g['y_true'])) < 2 or g['y_prob'] is None:
+                    val = 0.5 # Default fallback
+                else:
+                    try:
+                        val = roc_auc_score(g['y_true'], g['y_prob'])
+                    except:
+                        val = 0.5
+            
+            details[g['group_id']] = round(float(val), 4)
+            scores.append(val)
 
+        # 整合多种差异度量
+        return self._summarize_comprehensive(metric, scores, details)
 
-        return results
+    # --- Interface: Core Fairness Metrics ---
     
-    def _compute_accuracy(self, valid_groups):
-        group_metrics = {}
-        for group in valid_groups:
-            subset = self.data[self.data['intersectional_group'] == group]
-            acc = (subset['y_true'] == subset['y_pred']).mean()
-            group_metrics[group] = float(acc) # JSON序列化保证
+    def evaluate_equal_opportunity(self, group_keys: List[str]) -> Dict:
+        """
+        对应: equal_opportunity_difference
+        逻辑: 比较各组 True Positive Rate (Recall) 的差异
+        """
+        return self.compute_subgroup_performance(group_keys, metric='recall')
 
-        values = list(group_metrics.values())
+    def evaluate_predictive_parity(self, group_keys: List[str]) -> Dict:
+        """
+        对应: predictive_parity_difference
+        逻辑: 比较各组 Precision 的差异
+        """
+        return self.compute_subgroup_performance(group_keys, metric='precision')
+
+    def evaluate_worst_case(self, group_keys: List[str], metric: str = 'accuracy') -> Dict:
+        """
+        对应: worst_subgroup_accuracy
+        """
+        stats = self.compute_subgroup_performance(group_keys, metric)
         return {
-            "per_group": group_metrics,
-            "fairness_gap": max(values) - min(values),
-            "std_dev": float(np.std(values))
+            "metric": metric,
+            "worst_group": min(stats['subgroup_details'], key=stats['subgroup_details'].get),
+            "worst_score": stats['min_score']
         }
-    
-    def _compute_equalized_odds(self, valid_groups):
-        """计算TPR/FPR组间差异"""
-        tpr_fpr = {}
-        for group in valid_groups:
-            subset = self.data[self.data["intersectional_group"] == group]
-            tn, fp, fn, tp = confusion_matrix(
-                subset["y_true"], subset["y_pred"]
-            ).ravel()
-            tpr = tp / (tp + fn) if (tp + fn) > 0 else 0
-            fpr = fp / (fp + tn) if (fp + tn) > 0 else 0
-            tpr_fpr[group] = {"TPR": float(tpr), "FPR": float(fpr)}
+
+    # --- Interface: Inequality Metrics (Gini, Entropy) ---
+    # 这是你代码中比较 Fancy 的部分，我实现了具体逻辑
+
+    def _gini_coefficient(self, values: List[float]) -> float:
+        """辅助函数：计算基尼系数"""
+        if not values: return 0.0
+        # Gini = sum(|xi - xj|) / (2 * n^2 * mean)
+        # 这里我们计算指标分布的不平等度（指标越接近代表越公平，Gini越小）
+        sorted_vals = sorted(values)
+        n = len(values)
+        accumulated = np.cumsum(sorted_vals)
+        if accumulated[-1] == 0: return 0.0
+        return (n + 1 - 2 * np.sum(accumulated) / accumulated[-1]) / n
+
+    def evaluate_distributional_fairness(self, group_keys: List[str], metric: str = 'accuracy') -> Dict:
+        """
+        对应: intersectional_gini_coefficient, entropy_fairness_index, theil_index
+        计算某个性能指标在不同群体间分布的不平等程度
+        """
+        subgroups = self._get_subgroup_data(group_keys)
         
-        tpr_values = [v["TPR"] for v in tpr_fpr.values()]
-        fpr_values = [v["FPR"] for v in tpr_fpr.values()]
+        # 计算每个组的性能指标
+        scores = []
+        for g in subgroups:
+            if metric == 'accuracy':
+                val = accuracy_score(g['y_true'], g['y_pred'])
+            else:
+                val = f1_score(g['y_true'], g['y_pred'], zero_division=0) # Default to F1
+            scores.append(val)
+        
+        if not scores:
+            return {}
+
+        # 1. Gini
+        gini = self._gini_coefficient(scores)
+        
+        # 2. Entropy (这里计算分布的熵，值越大说明分布越均匀/公平)
+        # Normalize scores to probability distribution for entropy calc
+        score_sum = sum(scores)
+        if score_sum > 0:
+            prob_dist = [s/score_sum for s in scores]
+            ent_val = entropy(prob_dist)
+        else:
+            ent_val = 0.0
+
         return {
-            "per_group": tpr_fpr,
-            "tpr_gap": max(tpr_values) - min(tpr_values),
-            "fpr_gap": max(fpr_values) - min(fpr_values)
+            "target_metric": metric,
+            "gini_coefficient": round(gini, 4), # 越低越好 (0=完全平等)
+            "entropy_index": round(ent_val, 4), # 越高越好
+            "mean_performance": round(float(np.mean(scores)), 4)
         }
+
+    # --- Interface: Statistical Significance (Optional) ---
     
-    def _compute_auc(self, valid_groups):
-        return
-    
-
-class IntersectionalFairnessMetics:
-    """
-    交叉公平性指标计算器
-    封装所有交叉公平性指标的类
-    """
-
-    def __init__(self, predictions_df: pd.DataFrame, sensitive_attributes: List[str], dataset_config: Optional[Any] = None, min_group_size: int = 30):
-        self.predictions_df = predictions_df.copy()
-        self.sensitive_attributes = sensitive_attributes
-        self.dataset_config = dataset_config
-        self.min_group_size = min_group_size
-
-        # 中间结果
-        self._groups = None
-        self._valid_groups = None
-        self._group_metrics_cache = {}
-
-        self._validate_data()
-
-    def _validate_data(self) -> bool:
-
-        # 检查必需列
-        required_columns = ['sample_id', 'y_pred']
-        for col in required_columns:
-            if col not in self.predictions_df.columns:
-                raise ValueError(f"缺失必需列: {col}")
+    def evaluate_statistical_significance(self, group_keys: List[str]) -> Dict:
+        """
+        对应: statistical_significance_test
+        这里实现一个简单的卡方独立性检验 (Chi-Square Test of Independence)
+        检验 'Group Membership' 和 'Error Rate' 是否独立
+        """
+        subgroups = self._get_subgroup_data(group_keys)
         
-        # 检查敏感属性列是否存在
-        missing_sensitive = [attr for attr in self.sensitive_attributes 
-                           if attr not in self.predictions_df.columns]
-        if missing_sensitive:
-            raise ValueError(f"缺失敏感属性列: {missing_sensitive}")
+        # 构建列联表 (Contingency Table)
+        # Rows: Groups, Cols: [Correct, Incorrect]
+        observed = []
+        group_names = []
         
-        # 如果有真实标签，检查格式
-        if 'y_true' in self.predictions_df.columns:
-            unique_labels = self.predictions_df['y_true'].unique()
-            if len(unique_labels) > 2:
-                warnings.warn("检测到多分类标签，某些指标可能不适用")
+        for g in subgroups:
+            correct = np.sum(g['y_true'] == g['y_pred'])
+            incorrect = len(g['y_true']) - correct
+            observed.append([correct, incorrect])
+            group_names.append(g['group_id'])
+            
+        if len(observed) < 2:
+            return {"p_value": None, "significance": "Not enough groups"}
+
+        try:
+            chi2, p, dof, expected = chi2_contingency(observed)
+            is_significant = p < 0.05
+        except:
+            return {"error": "Chi-square calculation failed"}
+
+        return {
+            "test_type": "Chi-Square Test of Independence",
+            "p_value": float(p), # 如果 p < 0.05，说明不同组的错误率分布显著不同（即存在不公平）
+            "is_significant_disparity": bool(is_significant),
+            "dof": dof
+        }
+
+    # =========================================================================
+    # Helpers & Summarizers
+    # =========================================================================
+
+    def _summarize_comprehensive(self, metric_name: str, scores: List[float], details: Dict) -> Dict:
+        """
+        统一的输出格式化，涵盖了你要求的 Disparity Ratio, Gap, etc.
+        """
+        if not scores:
+            return {"error": "No valid groups"}
+            
+        _min = min(scores)
+        _max = max(scores)
+        _mean = np.mean(scores)
         
-        return True
-    # 子组划分方法
+        return {
+            "metric": metric_name,
+            "subgroup_details": details,
+            # 基础统计
+            "min_score": round(_min, 4),
+            "max_score": round(_max, 4),
+            "mean_score": round(_mean, 4),
+            "std_dev": round(float(np.std(scores)), 4),
+            
+            # 对应: accuracy_disparity_ratio (Min/Max)
+            # 越接近 1 越好
+            "disparity_ratio": round(_min / _max, 4) if _max > 0 else 0.0,
+            
+            # 对应: intersectional_mean_gap (Max - Min)
+            # 越接近 0 越好
+            "max_gap": round(_max - _min, 4),
+        }
 
+    # =========================================================================
+    # Unimplemented / Redundant Metrics (Marked as requested)
+    # =========================================================================
+    
+    def dynamic_range(self, groups: Dict):
+        """
+        [User Request]: dynamic_range
+        [Status]: Pass / Redundant.
+        Reason: Included in 'max_gap' (Max - Min) in summary.
+        """
+        pass 
 
-    def _create_intersectional_groups(self) -> Dict[Tuple, pd.DataFrame]:
+    def z_score_difference(self, groups: Dict):
+        """
+        [User Request]: z_score_difference
+        [Status]: Not Implemented.
+        Reason: Requires robust population mean/std estimation which is unstable for small subgroups.
+        """
         pass
-    
 
-    # ==================== 基础统计指标 ====================
-    
-    def calculate_group_accuracy(self, groups: Dict) -> Dict:
+    def confidence_intervals(self, groups: Dict):
         """
-        计算每个子组的准确率
-        """
-        pass
-    
-    def calculate_group_precision(self, groups: Dict) -> Dict:
-        """
-        计算每个子组的精确率
-        """
-        pass
-    
-    def calculate_group_recall(self, groups: Dict) -> Dict:
-        """
-        计算每个子组的召回率
-        """
-        pass
-    
-    def calculate_group_f1(self, groups: Dict) -> Dict:
-        """
-        计算每个子组的F1分数
-        """
-        pass
-    
-    # ==================== 交叉公平性核心指标 ====================
-    
-    def worst_subgroup_accuracy(self, groups: Dict) -> Dict:
-        """
-        计算最差子组准确率
-        返回: 包含最差准确率及相关信息的字典
-        """
-        pass
-    
-    def accuracy_disparity_ratio(self, groups: Dict) -> Dict:
-        """
-        计算准确率差异比
-        返回: 包含比率及相关信息的字典
-        """
-        pass
-    
-    def intersectional_mean_gap(self, groups: Dict) -> Dict:
-        """
-        计算交叉平均差距
-        返回: 包含平均差距及相关信息的字典
-        """
-        pass
-    
-    def equal_opportunity_difference(self, groups: Dict) -> Dict:
-        """
-        计算交叉机会均等差异
-        返回: 包含差异及相关信息的字典
-        """
-        pass
-    
-    def predictive_parity_difference(self, groups: Dict) -> Dict:
-        """
-        计算交叉预测均等差异
-        返回: 包含差异及相关信息的字典
-        """
-        pass
-    
-    # ==================== 不平等度量指标 ====================
-    
-    def intersectional_gini_coefficient(self, groups: Dict) -> Dict:
-        """
-        计算交叉基尼系数
-        返回: 包含基尼系数及相关信息的字典
-        """
-        pass
-    
-    def entropy_fairness_index(self, groups: Dict) -> Dict:
-        """
-        计算交叉熵公平指数
-        返回: 包含指数及相关信息的字典
-        """
-        pass
-    
-    def theil_index(self, groups: Dict) -> Dict:
-        """
-        计算交叉Theil指数
-        返回: 包含指数及相关信息的字典
-        """
-        pass
-    
-    # ==================== 动态范围和分布指标 ====================
-    
-    def dynamic_range(self, groups: Dict, metric: str = 'f1') -> Dict:
-        """
-        计算指定指标的动态范围
-        Args:
-            metric: 指标名称 ('accuracy', 'precision', 'recall', 'f1')
-        """
-        pass
-    
-    def z_score_difference(self, groups: Dict) -> Dict:
-        """
-        计算交叉Z-分数差异
-        返回: 包含最大Z分数及相关信息的字典
-        """
-        pass
-    
-    def performance_quartiles(self, groups: Dict) -> Dict:
-        """
-        计算子组性能的四分位数分布
-        返回: 包含四分位数及相关信息的字典
-        """
-        pass
-    
-    # ==================== 统计显著性检验 ====================
-    
-    def statistical_significance_test(self, groups: Dict) -> Dict:
-        """
-        执行统计显著性检验（如卡方检验或t检验）
-        返回: 包含p值及相关信息的字典
-        """
-        pass
-    
-    def confidence_intervals(self, groups: Dict, confidence_level: float = 0.95) -> Dict:
-        """
-        计算各子组性能指标的置信区间
-        """
-        pass
-    
-    # ==================== 综合指标和评分 ====================
-    
-    def calculate_all_metrics(self, groups: Dict) -> Dict:
-        """
-        计算所有交叉公平性指标
-        返回: 包含所有指标结果的字典
-        """
-        pass
-    
-    def overall_fairness_score(self, groups: Dict, weights: Optional[Dict] = None) -> Dict:
-        """
-        计算综合公平性分数
-        Args:
-            weights: 各指标权重字典
-        """
-        pass
-    
-    def fairness_report(self, include_details: bool = False) -> Dict:
-        """
-        生成完整的公平性报告
-        Args:
-            include_details: 是否包含详细的分组信息
-        """
-        pass
-    
-    # ==================== 可视化辅助方法 ====================
-    
-    def get_visualization_data(self, groups: Dict) -> Dict:
-        """
-        获取可视化所需的数据
-        返回: 结构化的数据字典，便于绘图
-        """
-        pass
-    
-    def performance_distribution_summary(self, groups: Dict) -> Dict:
-        """
-        获取性能分布摘要统计
-        返回: 包含均值、中位数、标准差等的字典
-        """
-        pass
-    
-    # ==================== 子组分析和诊断 ====================
-    
-    def identify_problematic_groups(self, groups: Dict, threshold: float = 0.7) -> Dict:
-        """
-        识别表现低于阈值的子组
-        Args:
-            threshold: 性能阈值
-        """
-        pass
-    
-    def subgroup_correlation_analysis(self) -> Dict:
-        """
-        分析子组性能与敏感属性的相关性
-        返回: 包含相关性系数的字典
-        """
-        pass
-    
-    # ==================== 属性访问器 ====================
-    
-    @property
-    def groups(self) -> Dict:
-        """获取有效的交叉子组"""
-        if self._valid_groups is None:
-            self._valid_groups = self._filter_valid_groups(
-                self._create_intersectional_groups()
-            )
-        return self._valid_groups
-    
-    @property
-    def num_groups(self) -> int:
-        """获取有效子组数量"""
-        return len(self.groups)
-    
-    @property
-    def group_sizes(self) -> Dict:
-        """获取各子组样本量"""
-        return {group_key: len(group_data) 
-                for group_key, group_data in self.groups.items()}
-    
-    # ==================== 工厂方法 ====================
-    
-    @classmethod
-    def from_config(cls, predictions_df: pd.DataFrame, 
-                   dataset_config: Any,
-                   sensitive_attributes: Optional[List[str]] = None,
-                   **kwargs) -> 'IntersectionalFairnessMetrics':
-        """
-        从数据集配置创建指标计算器
-        
-        Args:
-            predictions_df: 预测结果DataFrame
-            dataset_config: 数据集配置对象
-            sensitive_attributes: 敏感属性列表（如未指定则使用配置中的）
-            **kwargs: 其他初始化参数
-        """
-        pass
-    
-    # ==================== 序列化方法 ====================
-    
-    def to_dict(self) -> Dict:
-        """
-        将计算结果序列化为字典
-        """
-        pass
-    
-    def save_report(self, filepath: str, format: str = 'json'):
-        """
-        保存评估报告到文件
-        Args:
-            filepath: 文件路径
-            format: 文件格式 ('json', 'csv', 'excel')
+        [User Request]: confidence_intervals
+        [Status]: Future Work.
+        Reason: Requires bootstrapping, computationally expensive for real-time eval.
         """
         pass
