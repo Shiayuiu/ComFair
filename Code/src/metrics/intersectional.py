@@ -220,14 +220,153 @@ class IntersectionalEvaluator:
             "is_significant_disparity": bool(is_significant),
             "dof": dof
         }
-
+    
+    def evaluate_disparate_impact(self, group_keys: List[str]) -> Dict:
+        """
+        [新增] 差异性影响 (Disparate Impact)
+        计算 Min(PPR) / Max(PPR)。
+        理想值为 1.0；美国法律通常要求 > 0.8 (即 80% Rule)。
+        """
+        subgroups = self._get_subgroup_data(group_keys)
+        ppr_values = []
+        details = {}
+        
+        for g in subgroups:
+            # Positive Prediction Rate
+            ppr = np.mean(g['y_pred'])
+            ppr_values.append(ppr)
+            details[g['group_id']] = round(ppr, 4)
+            
+        if not ppr_values or max(ppr_values) == 0:
+            return {"error": "PPR is zero for all groups"}
+            
+        _min = min(ppr_values)
+        _max = max(ppr_values)
+        
+        return {
+            "metric": "Disparate Impact",
+            "score": round(_min / _max, 4), # 越接近 1 越好
+            "ideal_value": 1.0,
+            "rule_of_thumb_threshold": 0.8,
+            "min_group_ppr": round(_min, 4),
+            "max_group_ppr": round(_max, 4),
+            "subgroup_details": details
+        }
+    
+    def evaluate_differential_fairness(self, group_keys: List[str]) -> Dict:
+        """
+        [新增] 差分公平性 (Differential Fairness)
+        计算 epsilon = ln( max(P(y=1|Gi) / P(y=1|Gj)) )
+        衡量任意两个群体获得正例预测的概率比的对数最大值。
+        """
+        subgroups = self._get_subgroup_data(group_keys)
+        ppr_values = {}
+        
+        for g in subgroups:
+            # 平滑处理防止除零：(count + alpha) / (total + 2*alpha)
+            # 这里简化为添加一个极小值
+            ppr = np.mean(g['y_pred'])
+            ppr_values[g['group_id']] = max(ppr, 1e-10) # 避免 0
+            
+        # 计算所有两两组合的比率
+        max_ratio = 1.0
+        worst_pair = ("None", "None")
+        
+        ids = list(ppr_values.keys())
+        import itertools
+        for id_a, id_b in itertools.permutations(ids, 2):
+            ratio = ppr_values[id_a] / ppr_values[id_b]
+            if ratio > max_ratio:
+                max_ratio = ratio
+                worst_pair = (id_a, id_b)
+                
+        epsilon = np.log(max_ratio)
+        
+        return {
+            "metric": "Differential Fairness (Epsilon)",
+            "epsilon": round(epsilon, 4), # 越接近 0 越好
+            "max_ratio": round(max_ratio, 4),
+            "worst_pair": f"{worst_pair[0]} vs {worst_pair[1]}"
+        }
+    
+    def evaluate_calibration_fairness(self, group_keys: List[str], n_bins: int = 10) -> Dict:
+        """
+        [新增] 群体校准误差 (Expected Calibration Error per Group)
+        衡量模型在不同群体上的置信度是否可靠。
+        需要: parquet 中包含 probability 列。
+        """
+        subgroups = self._get_subgroup_data(group_keys)
+        ece_scores = {}
+        
+        for g in subgroups:
+            if g['y_prob'] is None:
+                return {"error": "Missing probabilities for calibration metric"}
+                
+            # 计算 ECE
+            prob_true, prob_pred = g['y_true'], g['y_prob']
+            ece = 0.0
+            bin_boundaries = np.linspace(0, 1, n_bins + 1)
+            
+            for i in range(n_bins):
+                # 获取落在这个概率区间的样本
+                bin_mask = (prob_pred >= bin_boundaries[i]) & (prob_pred < bin_boundaries[i+1])
+                bin_count = np.sum(bin_mask)
+                
+                if bin_count > 0:
+                    # 该区间内的平均准确率
+                    acc_in_bin = np.mean(prob_true[bin_mask] == (prob_pred[bin_mask] > 0.5))
+                    # 该区间内的平均置信度
+                    conf_in_bin = np.mean(prob_pred[bin_mask])
+                    # 加权误差
+                    ece += (bin_count / len(prob_true)) * np.abs(acc_in_bin - conf_in_bin)
+            
+            ece_scores[g['group_id']] = round(ece, 4)
+            
+        values = list(ece_scores.values())
+        return {
+            "metric": "Group Calibration Error (ECE)",
+            "max_ece": max(values),      # 最差的校准
+            "mean_ece": round(np.mean(values), 4),
+            "ece_disparity": round(max(values) - min(values), 4),
+            "subgroup_details": ece_scores
+        }
+    
+    def evaluate_treatment_equality(self, group_keys: List[str]) -> Dict:
+        """
+        [新增] 待遇均等 (Treatment Equality)
+        比较不同群体的 FN/FP 比率。
+        关注的是错误类型的偏好差异。
+        """
+        subgroups = self._get_subgroup_data(group_keys)
+        ratios = {}
+        
+        for g in subgroups:
+            tn, fp, fn, tp = confusion_matrix(g['y_true'], g['y_pred'], labels=[0,1]).ravel()
+            
+            # 避免除零
+            if fp == 0:
+                ratio = float('inf') if fn > 0 else 1.0
+            else:
+                ratio = fn / fp
+                
+            ratios[g['group_id']] = round(ratio, 4)
+            
+        # 移除 inf 进行统计
+        valid_ratios = [v for v in ratios.values() if v != float('inf')]
+        
+        return {
+            "metric": "Treatment Equality (FN/FP Ratio)",
+            "note": "Ratio > 1 means more False Negatives; Ratio < 1 means more False Positives",
+            "ratio_disparity": round(max(valid_ratios) - min(valid_ratios), 4) if valid_ratios else 0.0,
+            "subgroup_details": ratios
+        }
     # =========================================================================
     # Helpers & Summarizers
     # =========================================================================
 
     def _summarize_comprehensive(self, metric_name: str, scores: List[float], details: Dict) -> Dict:
         """
-        统一的输出格式化，涵盖了你要求的 Disparity Ratio, Gap, etc.
+        统一的输出格式化，涵盖了 Disparity Ratio, Gap, etc.
         """
         if not scores:
             return {"error": "No valid groups"}

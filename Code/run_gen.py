@@ -100,26 +100,38 @@ def main(args):
     # 5. 批量推理
     print(f"Running inference on {len(prompts)} samples...")
     batch_size = args.batch_size
-    all_preds = []
+    
     all_raw_texts = []
+    all_preds = []
+    all_probs = []  # <--- 新增：存储概率
     
     for i in range(0, len(prompts), batch_size):
         batch_prompts = prompts[i : i + batch_size]
-        batch_responses = model.predict_batch(batch_prompts)
         
-        for resp in batch_responses:
-            all_raw_texts.append(resp)
-            all_preds.append(parse_response(resp, dataset_config.label_map))
+        # 调用新方法
+        batch_results = model.predict_batch_with_prob(batch_prompts)
+        
+        for res in batch_results:
+            text = res['text']
+            prob = res['probability']
+            
+            # 解析标签 (A->1, B->0)
+            pred_label = parse_response(text, dataset_config.label_map)
+            
+            all_raw_texts.append(text)
+            all_preds.append(pred_label)
+            all_probs.append(prob) # <--- 存储
             
         if i % 100 == 0:
             print(f"Processed {i}/{len(prompts)}")
 
     # 6. 结果整合与保存
     result_df = pd.DataFrame({
-        "sample_id": df["sample_id"],   # 关键：用于 Join
-        # "prompt": prompts,              # 可选：便于调试
+        "sample_id": df["sample_id"],
+        "prompt": prompts,
         "raw_response": all_raw_texts,
         "pred_label": all_preds,
+        "pred_prob": all_probs,  # <--- 保存到 parquet
         "model_name": args.model_name
     })
     
