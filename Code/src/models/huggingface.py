@@ -8,6 +8,7 @@ class HFModelWrapper:
     def __init__(self, model_path: str, device_map="auto", load_in_4bit=False):
         print(f"Loading HF Model from: {model_path}...")
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+        self.tokenizer.padding_side = "left"
         
         model_kwargs = {"torch_dtype": torch.bfloat16}
         if load_in_4bit:
@@ -22,7 +23,14 @@ class HFModelWrapper:
         )
         self.device = self.model.device
 
-    def predict_batch_with_prob(self, prompts: List[str], max_new_tokens=10) -> List[Dict]:
+        # Classfication任务上的优化
+        self.label_token_ids = {
+            "A": self.tokenizer.encode("A", add_special_tokens=False)[0],
+            "B": self.tokenizer.encode("B", add_special_tokens=False)[0],
+            }
+
+    # For Task Classification
+    def predict_batch_with_prob(self, prompts: List[str], ) -> List[Dict]:
         """
         批量预测并返回文本和置信度 (Probability)
         """
@@ -35,10 +43,15 @@ class HFModelWrapper:
         # 2. Generate with Scores
         # output_scores=True: 返回每一步的 logits
         # return_dict_in_generate=True: 返回结构化对象
+        max_new_tokens = 1
         with torch.no_grad():
             outputs = self.model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
+                do_sample = False,
+                temperature = None,
+                top_p = None,
+                top_k = None,
                 pad_token_id=self.tokenizer.pad_token_id,
                 output_scores=True,
                 return_dict_in_generate=True
@@ -47,34 +60,32 @@ class HFModelWrapper:
         # 3. 解析结果
         results = []
         
-        # compute_transition_scores 可以计算生成序列的 log_probs
-        # shape: (batch_size, sequence_length)
-        transition_scores = self.model.compute_transition_scores(
-            outputs.sequences, outputs.scores, normalize_logits=True
-        )
-        
+        # outputs.scores: List[length=1] of logits
+        # shape of scores[0]: (batch_size, vocab_size)
+        first_step_logits = outputs.scores[0]
+        first_step_probs = torch.softmax(first_step_logits, dim=-1)
+
         input_length = inputs.input_ids.shape[1]
         generated_tokens = outputs.sequences[:, input_length:]
         
-        for i, scores in enumerate(transition_scores):
-            # 获取生成的纯文本
-            gen_text = self.tokenizer.decode(generated_tokens[i], skip_special_tokens=True).strip()
-            
-            # 计算置信度：取生成序列中所有 token 概率的几何平均值 (Geometric Mean)
-            # 也可以简单地取 sum(log_probs) 然后 exp，或者取第一个 token 的 prob
-            # 这里我们采用 exp(mean(log_probs)) 作为序列置信度
-            
-            # 过滤掉 pad token 的分数 (pad token 的 log_prob 通常是 0 或 -inf，视处理而定，这里简单处理)
-            valid_scores = scores[scores != -float('inf')]
-            if len(valid_scores) > 0:
-                avg_log_prob = valid_scores.mean().item()
-                probability = np.exp(avg_log_prob)
+        for i in range(generated_tokens.shape[0]):
+            token_id = generated_tokens[i, 0].item()
+            gen_text = self.tokenizer.decode(
+                token_id,
+                skip_special_tokens=True
+            ).strip()
+
+            # 只取 A / B 的概率
+            if gen_text in self.label_token_ids:
+                prob = first_step_probs[i, token_id].item()
             else:
-                probability = 0.0
-                
+                # 非法输出（如空、特殊符号）
+                prob = 0.0
+
+            PROB_PRECISION = 6
             results.append({
                 "text": gen_text,
-                "probability": round(probability, 6) # 保留6位小数
+                "probability": round(prob, PROB_PRECISION)  # 严格定义的分类概率
             })
             
         return results

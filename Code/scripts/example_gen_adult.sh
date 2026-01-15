@@ -15,7 +15,7 @@ MODEL_PATH="/zhdd/home/yfwu/model/Qwen2.5-1.5B-Instruct/"
 
 # 任务参数
 BATCH_SIZE=8
-DEBUG_N=20  # 设置为 10 可以只跑前10条用于测试，设置为 0 跑全量
+DEBUG_N=0  # 设置为 10 可以只跑前10条用于测试，设置为 0 跑全量
 
 # --- 执行区域 ---
 
