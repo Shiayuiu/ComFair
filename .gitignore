@@ -1,6 +1,7 @@
 Code/data/results/
 Code/configs/__pycache__/
 Code/src/models/__pycache__/
+Code/src/data/__pycache__/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
