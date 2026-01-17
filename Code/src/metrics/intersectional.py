@@ -17,7 +17,7 @@ class IntersectionalEvaluator:
         self.pred_col = pred_col
         self.prob_col = prob_col
         
-        # 基础检查
+        # 检查
         if self.label_col not in self.df.columns or self.pred_col not in self.df.columns:
             raise ValueError(f"Missing columns. Required: {self.label_col}, {self.pred_col}")
 
@@ -101,6 +101,80 @@ class IntersectionalEvaluator:
             "score": round(min(ppr_values) / max(ppr_values), 4),
             "subgroup_details": details
         }
+    
+    def evaluate_demographic_parity(self, group_keys: List[str]) -> Dict:
+        """
+        [DP Gap] 计算 Demographic Parity Gap
+        Formula: Max(PPR) - Min(PPR)
+        """
+        subgroups = self._get_subgroup_data(group_keys)
+        ppr_values = []
+        details = {}
+        
+        for g in subgroups:
+            ppr = np.mean(g['y_pred'])
+            ppr_values.append(ppr)
+            details[g['group_id']] = round(ppr, 4)
+            
+        if not ppr_values: return {"error": "No groups"}
+        
+        gap = max(ppr_values) - min(ppr_values)
+        
+        return {
+            "metric": "Demographic Parity Gap (DP)",
+            "value": round(gap, 4), # 这就是 DP 值
+            "max_ppr": round(max(ppr_values), 4),
+            "min_ppr": round(min(ppr_values), 4),
+            "details": details
+        }
+
+    def evaluate_equalized_odds(self, group_keys: List[str]) -> Dict:
+        """
+        [EO Gap] 计算 Equalized Odds Gap
+        Formula: (Max_TPR - Min_TPR) + (Max_FPR - Min_FPR)
+        """
+        subgroups = self._get_subgroup_data(group_keys)
+        tpr_values = []
+        fpr_values = []
+        details = {}
+        
+        for g in subgroups:
+            tn, fp, fn, tp = confusion_matrix(g['y_true'], g['y_pred'], labels=[0, 1]).ravel()
+            
+            tpr = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
+            
+            tpr_values.append(tpr)
+            fpr_values.append(fpr)
+            details[g['group_id']] = {"tpr": round(tpr, 4), "fpr": round(fpr, 4)}
+            
+        if not tpr_values: return {"error": "No groups"}
+        
+        tpr_gap = max(tpr_values) - min(tpr_values)
+        fpr_gap = max(fpr_values) - min(fpr_values)
+        eo_gap = tpr_gap + fpr_gap
+        
+        return {
+            "metric": "Equalized Odds Gap (EO)",
+            "value": round(eo_gap, 4), # 这就是 EO 值
+            "tpr_gap": round(tpr_gap, 4),
+            "fpr_gap": round(fpr_gap, 4),
+            "details": details
+        }
+
+    def calculate_unfairness_score(self, dp_result: Dict, eo_result: Dict) -> float:
+        """
+        [Composite Score] 计算综合不公平得分
+        Formula: (DP + EO) / 2
+        """
+        try:
+            dp = dp_result.get("value", 0.0)
+            eo = eo_result.get("value", 0.0)
+            # 简单平均，也可以根据需求加权
+            score = (dp + eo) / 2
+            return round(score, 4)
+        except:
+            return -1.0
 
     def evaluate_calibration_fairness(self, group_keys: List[str], n_bins: int = 10) -> Dict:
         """Group ECE"""

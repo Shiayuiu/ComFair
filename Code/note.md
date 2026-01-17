@@ -37,4 +37,14 @@ Q3：二分类任务上流程，仓库架构？
 
 **Task 1: Classification**
 
+config文件内包含了prompt实例和数据集对应的敏感属性分组（age, gender, race等）
+
 1\. Dataset：UCI ADULT
+
+table 范式
+
+|               | DP | EO | Unf. |
+| ------------- | -- | -- | ---  |
+| race          |    |    |      |
+| gender        |    |    |      |
+| race & gender |    |    |      |

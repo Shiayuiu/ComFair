@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import uuid
 
-def process_adult_data(input_path, output_feature_path, output_meta_path):
+def process_adult_data(input_path, output_feature_path, output_meta_path, sample_size=None):
     # 1. 读取数据
     cols = [
         'age', 'workclass', 'fnlwgt', 'education', 'educational-num',
@@ -19,6 +19,10 @@ def process_adult_data(input_path, output_feature_path, output_meta_path):
 
     # 过滤种族 (保持你的实验设置)
     data = data[data['race'].isin(['Black', 'White'])]
+
+    # sampling
+    if sample_size:
+        data = data.sample(n=sample_size, random_state=42)
     
     # 生成唯一 ID
     data['sample_id'] = [str(uuid.uuid4()) for _ in range(len(data))]

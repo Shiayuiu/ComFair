@@ -4,9 +4,8 @@ import argparse
 import pandas as pd
 import os
 import time
-#from configs.adult import dataset_config
 from configs import get_dataset_config # Dynamic Import
-from src.models.huggingface import HFModelWrapper
+from src.models import load_model
 
 def parse_response_backup(response_text: str, label_map: dict) -> int:
     """
@@ -66,7 +65,6 @@ def main(args):
     # 1. 准备配置和路径
     print(f"Loading configuration for dataset: {args.dataset}")
     dataset_config = get_dataset_config(args.dataset) # 关键修改
-
     output_dir = "data/results/predictions"
     os.makedirs(output_dir, exist_ok=True)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -95,7 +93,19 @@ def main(args):
         prompts.append(prompt)
     
     # 4. 加载模型
-    model = HFModelWrapper(model_path=args.model_path)
+    # 构造参数字典
+    model_kwargs = {}
+    if args.api_key:
+        model_kwargs['api_key'] = args.api_key
+    if args.base_url:
+        model_kwargs['base_url'] = args.base_url
+
+    # 统一加载
+    model = load_model(
+        model_type=args.model_type,
+        model_path_or_name=args.model_path, # 对于 API，这里传入 "gpt-4" 等名称
+        **model_kwargs
+    )
     
     # 5. 批量推理
     print(f"Running inference on {len(prompts)} samples...")
@@ -131,7 +141,7 @@ def main(args):
         "prompt": prompts,
         "raw_response": all_raw_texts,
         "pred_label": all_preds,
-        "pred_prob": all_probs,  # <--- 保存到 parquet
+        # "pred_prob": all_probs,  
         "model_name": args.model_name
     })
     
@@ -148,6 +158,11 @@ if __name__ == "__main__":
     parser.add_argument("--model_path", type=str, required=True, help="Local path or HF hub path")
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--debug_n", type=int, default=0, help="Run only N samples for debugging")
+
+    parser.add_argument("--model_type", type=str, default="hf", choices=["hf", "api", "reasoning_api"], 
+                        help="Model backend type: 'hf' for local HuggingFace, 'api' for OpenAI-compatible APIs, 'reasoning_api' for Reasoning models. ")
+    parser.add_argument("--api_key", type=str, default=None, help="API Key for API models")
+    parser.add_argument("--base_url", type=str, default=None, help="Base URL for API models")
     
     args = parser.parse_args()
     main(args)

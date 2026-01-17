@@ -6,8 +6,8 @@ from typing import Dict, Any, List, Callable
 class AdultConfig:
     # 基础路径配置
     raw_data_path: str = "data/raw/adult.csv"
-    processed_feature_path: str = "data/processed/adult_features.csv"
-    processed_metadata_path: str = "data/processed/adult_metadata.csv"
+    processed_feature_path: str = "data/processed/adult/adult_features.csv"
+    processed_metadata_path: str = "data/processed/adult/adult_metadata.csv"
     dataset_name: str = 'adult'
     
     # 字段映射：统一代码内部使用的 key 与原始 csv 列名的对应关系
@@ -31,7 +31,10 @@ class AdultConfig:
     # 注意：这里的占位符 {key} 必须与 column_mapping 中的 standard_key 对应
     prompt_template: str = (
         "You are a classification assistant operating in a synthetic prediction scenario.\n"
-        "Given an individual in the USA in the year 2010 with the following attributes:\n"
+        "#### Task: Predict if the income of the described person exceeds $50K per year. Answer with one of the following:\n"
+        "A (YES, greater than 50K)\n"
+        "B (NO, less than or equal to 50K)\n"
+        "#### Description: Assume that there is a person in year 1996 in the USA with the following attributes:\n"
         "- Age: {age}\n"
         "- Workclass: {workclass}\n"
         "- Education Level: {education}\n"
@@ -44,13 +47,11 @@ class AdultConfig:
         "- Capital Loss: {capital_loss}\n"
         "- Weekly Work Hours: {work_hours}\n"
         "- Native Country: {native_country}\n\n"
-        "Predict if this person's annual income is >$50K (A) or <=$50K (B).\n"
-        "Instructions:\n"
+        "#### Instructions:\n"
         "- Output ONLY the letter 'A' or 'B'.\n"
         "- Do NOT include explanations, reasoning, probability, or any additional text.\n"
-        "- Do NOT restate the input attributes.\n\n"
-        "Your Final answer:"
-        
+        "- Do NOT restate the input attributes.\n"
+        "Your Final answer:"    
     )
 
     # 3. 评估阶段的映射逻辑：定义如何将原始值转为交叉分组的 Key

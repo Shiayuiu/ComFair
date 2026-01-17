@@ -8,7 +8,7 @@ MODEL_NAME="Qwen2.5-1.5B"
 # 查询参数 (Query Stage)
 # 如果留空 ""，则脚本会调用 configs/[dataset].py 中默认定义的敏感属性
 # 如果需要手动指定，例如: QUERY_ATTRS="race gender age"
-QUERY_ATTRS="race gender"
+QUERY_ATTRS="race gender age"
 
 # 结果路径配置
 PRED_DIR="./data/results/predictions/"
@@ -26,7 +26,7 @@ fi
 
 # 检查目录下是否有 parquet 文件
 if [ -z "$(ls -A $PRED_DIR/*.parquet 2>/dev/null)" ]; then
-    echo "Error: No .parquet files found in $PRED_DIR. Please run generate.sh first."
+    echo "Error: No .parquet files found in $PRED_DIR. Please run generate script first."
     exit 1
 fi
 

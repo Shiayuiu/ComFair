@@ -3,8 +3,9 @@ import torch
 import numpy as np
 from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM
 from typing import List, Dict, Tuple
+from .base import BaseModel
 
-class HFModelWrapper:
+class HFModelWrapper(BaseModel):
     def __init__(self, model_path: str, device_map="auto", load_in_4bit=False):
         print(f"Loading HF Model from: {model_path}...")
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
@@ -30,7 +31,7 @@ class HFModelWrapper:
             }
 
     # For Task Classification
-    def predict_batch_with_prob(self, prompts: List[str], ) -> List[Dict]:
+    def predict_batch_with_prob(self, prompts: List[str], max_new_tokens) -> List[Dict]:
         """
         批量预测并返回文本和置信度 (Probability)
         """

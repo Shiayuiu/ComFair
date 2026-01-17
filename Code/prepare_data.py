@@ -5,7 +5,7 @@ from configs.adult import dataset_config
 
 def main():
     # 1. 确保目录存在
-    os.makedirs("data/processed", exist_ok=True)
+    os.makedirs("data/processed/adult", exist_ok=True)
     os.makedirs("data/results/predictions", exist_ok=True)
     os.makedirs("data/results/reports", exist_ok=True)
 
@@ -20,7 +20,8 @@ def main():
     process_adult_data(
         input_path=dataset_config.raw_data_path,
         output_feature_path=dataset_config.processed_feature_path,
-        output_meta_path=dataset_config.processed_metadata_path
+        output_meta_path=dataset_config.processed_metadata_path,
+        sample_size=10000
     )
     print(">>> Data Preparation Complete.")
 
