@@ -2,7 +2,7 @@ import os
 import time
 from typing import List, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor
-from openai import OpenAI, APIError
+from openai import OpenAI, APIStatusError, APIConnectionError, RateLimitError
 from .base import BaseModel
 
 class ReasoningAPIWrapper(BaseModel):
@@ -17,17 +17,16 @@ class ReasoningAPIWrapper(BaseModel):
         self.model_name = model_name
         self.client = OpenAI(
             api_key=api_key or os.getenv("OPENAI_API_KEY"),
-            base_url=base_url or os.getenv("OPENAI_BASE_URL")
+            base_url=base_url or os.getenv("OPENAI_BASE_URL"),
         )
         self.max_workers = max_workers
 
     def _request_single_prompt(self, prompt: str, max_new_tokens: int) -> Dict:
         try:
-
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}], 
-                max_tokens=1000,      
+                max_tokens=300,      
             )
             
             choice = response.choices[0]
@@ -52,7 +51,7 @@ class ReasoningAPIWrapper(BaseModel):
         results = self.predict_batch_with_prob(prompts, max_new_tokens)
         return [r['text'] for r in results]
 
-    def predict_batch_with_prob(self, prompts: List[str], max_new_tokens=1000) -> List[Dict]:
+    def predict_batch_with_prob(self, prompts: List[str], max_new_tokens=300) -> List[Dict]:
         """
         并发请求
         注意：Reasoning 模型通常较慢，并发数不宜过高，且超时时间可能需要更长

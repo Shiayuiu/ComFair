@@ -119,7 +119,7 @@ def generate_markdown_report(json_path, output_path):
     print(f"Report successfully generated at: {output_path}")
 
 def main(args):
-    # 1. 初始化与数据加载
+    # 0. 初始化与数据加载
     print(f">>> [Init] Dataset: {args.dataset}")
     dataset_config = get_dataset_config(args.dataset)
     
@@ -129,10 +129,21 @@ def main(args):
     meta_df = pd.read_csv(dataset_config.processed_metadata_path)
     
     full_df = pd.merge(pred_df, meta_df, on="sample_id", how="inner")
+    original_count = len(full_df)
+
+    # 1. 过滤无效结果
+    valid_df = full_df[full_df['pred_label'] != -1].copy()
+    valid_count = len(valid_df)
+    unparsable_count = original_count - valid_count
     
-    # 2. [Process] 动态映射
-    eval_df = apply_eval_transforms(full_df, dataset_config)
-    has_prob = 'pred_prob' in eval_df.columns
+    print(f">>> [Clean] Data filtering complete:")
+    print(f"    - Original samples: {original_count}")
+    print(f"    - Valid samples: {valid_count}")
+    print(f"    - Unparsable (Dropped): {unparsable_count} ({unparsable_count/original_count:.2%})")
+
+    # 2. [Process] 动态映射 (基于有效样本)
+    eval_df = apply_eval_transforms(valid_df, dataset_config)
+    has_prob = 'pred_prob' in eval_df.columns and not eval_df['pred_prob'].isnull().all()
     
     # 3. [Eval] 初始化评估器
     evaluator = IntersectionalEvaluator(
@@ -174,8 +185,9 @@ def main(args):
             if has_prob:
                 metrics_bundle["auc_parity"] = evaluator.compute_subgroup_performance(group_keys, 'auc')
                 metrics_bundle["calibration_ece"] = evaluator.evaluate_calibration_fairness(group_keys)
-            fairness_report[group_name] = metrics_bundle
             '''
+            
+            fairness_report[group_name] = metrics_bundle
             
         except KeyError as e:
             continue
@@ -202,6 +214,9 @@ def main(args):
             "model": args.model_name,
             "dataset": args.dataset,
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "original_samples": original_count,
+            "valid_samples": valid_count,
+            "unparsable_ratio": unparsable_count / original_count,
             "queries": [" & ".join(q) for q in query_combinations]
         },
         "overall_metrics": compute_basic_metrics(eval_df['label'], eval_df['pred_label']),
