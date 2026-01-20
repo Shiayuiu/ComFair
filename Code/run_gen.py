@@ -65,7 +65,7 @@ def main(args):
     # 1. 准备配置和路径
     print(f"Loading configuration for dataset: {args.dataset}")
     dataset_config = get_dataset_config(args.dataset) # 关键修改
-    output_dir = "data/results/predictions"
+    output_dir = "data/results/predictions/classification/"
     os.makedirs(output_dir, exist_ok=True)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     output_file = os.path.join(output_dir, f"{args.model_name}-{args.dataset}-{timestamp}.parquet")

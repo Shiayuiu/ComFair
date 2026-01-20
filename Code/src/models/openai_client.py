@@ -39,9 +39,9 @@ class OpenAIWrapper(BaseModel):
                     model=self.model_name,
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=max_new_tokens,
-                    temperature=1.0,
+                    # temperature=1.0,
                     # The following line use in Qwen3
-                    # extra_body={"enable_thinking": False},
+                    extra_body={"enable_thinking": False},
                     # logprobs=True,
                     # top_logprobs=1
                 )

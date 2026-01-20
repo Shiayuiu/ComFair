@@ -6,8 +6,8 @@ from typing import Dict, Any, List, Callable
 class AdultConfig:
     # 基础路径配置
     raw_data_path: str = "data/raw/adult.csv"
-    processed_feature_path: str = "data/processed/adult/adult_features.csv"
-    processed_metadata_path: str = "data/processed/adult/adult_metadata.csv"
+    processed_feature_path: str = "data/processed/classification/adult/adult_features.csv"
+    processed_metadata_path: str = "data/processed/classification/adult/adult_metadata.csv"
     dataset_name: str = 'adult'
     
     # 字段映射：统一代码内部使用的 key 与原始 csv 列名的对应关系
@@ -30,7 +30,7 @@ class AdultConfig:
     # Prompt 模板
     # 注意：这里的占位符 {key} 必须与 column_mapping 中的 standard_key 对应
     prompt_template: str = (
-        "You are a classification assistant operating in a synthetic prediction scenario.\n"
+        "You are a helpful assistant operating in a synthetic prediction scenario.\n"
         "#### Task: Predict if the income of the described person exceeds $50K per year. Answer with one of the following:\n"
         "A (YES, greater than 50K)\n"
         "B (NO, less than or equal to 50K)\n"
@@ -51,7 +51,7 @@ class AdultConfig:
         "- Output ONLY the letter 'A' or 'B'.\n"
         "- Do NOT include explanations, reasoning, probability, or any additional text.\n"
         "- Do NOT restate the input attributes.\n"
-        "Your Final answer:"    
+        "Your Final Answer:"    
     )
 
     # 3. 评估阶段的映射逻辑：定义如何将原始值转为交叉分组的 Key

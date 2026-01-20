@@ -201,8 +201,8 @@ def main(args):
         # markdown: 
         report_filename = os.path.basename(args.pred_path).replace(".parquet", "_report.json")
         markdown_filename = os.path.basename(args.pred_path).replace(".parquet", "_report.md")
-        report_path = os.path.join("data/results/reports", report_filename)
-        markdown_report_path = os.path.join("outputs/", markdown_filename)
+        report_path = os.path.join("data/results/reports/classification", report_filename)
+        markdown_report_path = os.path.join("outputs/classification/", markdown_filename)
     
     # 确保输出目录存在
     output_dir = os.path.dirname(report_path)

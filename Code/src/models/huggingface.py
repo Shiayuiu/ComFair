@@ -1,92 +1,125 @@
 # src/models/huggingface.py
 import torch
 import numpy as np
-from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM
-from typing import List, Dict, Tuple
+from typing import List, Dict, Union
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from .base import BaseModel
 
 class HFModelWrapper(BaseModel):
-    def __init__(self, model_path: str, device_map="auto", load_in_4bit=False):
-        print(f"Loading HF Model from: {model_path}...")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-        self.tokenizer.padding_side = "left"
+    def __init__(self, model_path: str, device: str = "cuda", **kwargs):
+        """
+        HuggingFace 本地模型包装器
         
-        model_kwargs = {"torch_dtype": torch.bfloat16}
-        if load_in_4bit:
-            model_kwargs["load_in_4bit"] = True
-            
-        # 注意：这里我们直接加载 Model 实例，以便更好地控制生成参数
-        self.model = AutoModelForCausalLM.from_pretrained(
+        Args:
+            model_path: 本地路径或 HF Hub ID (e.g., "Qwen/Qwen2.5-1.5B-Instruct")
+            device: "cuda" or "cpu" (如果使用 device_map="auto" 则忽略此参数)
+            kwargs: 其他传给 AutoModel 的参数 (如 load_in_8bit)
+        """
+        self.model_path = model_path
+        self.device = device
+        
+        print(f">>> Loading HF Model from: {model_path}")
+        
+        # 1. 加载 Tokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(
             model_path, 
-            device_map=device_map, 
-            trust_remote_code=True,
-            **model_kwargs
+            trust_remote_code=True
         )
-        self.device = self.model.device
-
-        # Classfication任务上的优化
-        self.label_token_ids = {
-            "A": self.tokenizer.encode("A", add_special_tokens=False)[0],
-            "B": self.tokenizer.encode("B", add_special_tokens=False)[0],
-            }
-
-    # For Task Classification
-    def predict_batch_with_prob(self, prompts: List[str], max_new_tokens) -> List[Dict]:
-        """
-        批量预测并返回文本和置信度 (Probability)
-        """
-        # 1. Tokenize
+        
+        # 修正 Padding Token (很多新模型默认没有 pad_token)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
             
-        inputs = self.tokenizer(prompts, return_tensors="pt", padding=True, truncation=True).to(self.device)
+        # 生成任务通常需要左侧 Padding，否则 pad token 会混入输入导致输出异常
+        self.tokenizer.padding_side = "left"
+
+        # 2. 加载模型
+        # 默认使用 bfloat16 以节省显存并保持精度 (如果硬件支持)
+        torch_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         
-        # 2. Generate with Scores
-        # output_scores=True: 返回每一步的 logits
-        # return_dict_in_generate=True: 返回结构化对象
-        max_new_tokens = 1
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            torch_dtype=torch_dtype,
+            device_map="auto",  # 自动分配多卡或 CPU/GPU
+            trust_remote_code=True,
+            **kwargs
+        )
+        self.model.eval() # 设置为评估模式
+
+    def predict_batch(self, prompts: List[str], max_new_tokens: int = 50) -> List[str]:
+        """简化的预测接口，仅返回文本"""
+        results = self.predict_batch_with_prob(prompts, max_new_tokens)
+        return [r['text'] for r in results]
+
+    def predict_batch_with_prob(self, prompts: List[str], max_new_tokens: int = 500) -> List[Dict]:
+        """
+        执行批量推理，并返回生成的文本及其对应的置信度。
+        格式与 API Wrapper 保持一致。
+        """
+        # 1. Tokenization
+        inputs = self.tokenizer(
+            prompts, 
+            return_tensors="pt", 
+            padding=True, 
+            truncation=True,
+            max_length=2048 # 防止过长输入 OOM
+        ).to(self.model.device)
+
+        input_ids = inputs["input_ids"]
+        attention_mask = inputs["attention_mask"]
+        input_len = input_ids.shape[1]
+
+        # 2. Generation
         with torch.no_grad():
             outputs = self.model.generate(
-                **inputs,
+                input_ids=input_ids,
+                attention_mask=attention_mask,
                 max_new_tokens=max_new_tokens,
-                do_sample = False,
-                temperature = None,
-                top_p = None,
-                top_k = None,
+                do_sample=False,       # Greedy Decoding (确定性输出)
+                return_dict_in_generate=True,
+                output_scores=True,    # 必须开启以计算概率
                 pad_token_id=self.tokenizer.pad_token_id,
-                output_scores=True,
-                return_dict_in_generate=True
+                eos_token_id=self.tokenizer.eos_token_id
             )
-        
-        # 3. 解析结果
+
+        # 3. 结果解析
         results = []
         
-        # outputs.scores: List[length=1] of logits
-        # shape of scores[0]: (batch_size, vocab_size)
-        first_step_logits = outputs.scores[0]
-        first_step_probs = torch.softmax(first_step_logits, dim=-1)
+        # transition_scores: 计算每一步生成的 log_prob
+        # shape: (batch_size, generated_len)
+        transition_scores = self.model.compute_transition_scores(
+            outputs.sequences, outputs.scores, normalize_logits=True
+        )
 
-        input_length = inputs.input_ids.shape[1]
-        generated_tokens = outputs.sequences[:, input_length:]
+        generated_tokens = outputs.sequences[:, input_len:]
         
-        for i in range(generated_tokens.shape[0]):
-            token_id = generated_tokens[i, 0].item()
-            gen_text = self.tokenizer.decode(
-                token_id,
-                skip_special_tokens=True
-            ).strip()
-
-            # 只取 A / B 的概率
-            if gen_text in self.label_token_ids:
-                prob = first_step_probs[i, token_id].item()
-            else:
-                # 非法输出（如空、特殊符号）
-                prob = 0.0
-
-            PROB_PRECISION = 6
-            results.append({
-                "text": gen_text,
-                "probability": round(prob, PROB_PRECISION)  # 严格定义的分类概率
-            })
+        for i, (gen_seq, scores) in enumerate(zip(generated_tokens, transition_scores)):
+            # --- 文本解码 ---
+            # skip_special_tokens=True 会去掉 EOS 和 PAD
+            text = self.tokenizer.decode(gen_seq, skip_special_tokens=True)
             
+            # --- 概率计算 ---
+            # 1. 过滤掉 Padding Token 的分数 (pad token 的 log_prob 通常没有意义)
+            # 注意: transition_scores 已经对应生成的 tokens
+            valid_mask = (gen_seq != self.tokenizer.pad_token_id)
+            valid_scores = scores[valid_mask]
+            
+            if len(valid_scores) > 0:
+                # 计算平均 Log Probability
+                avg_log_prob = torch.mean(valid_scores).item()
+                # 转换为线性概率 P = exp(log_P)
+                # 这种计算方式表示 "生成整个序列的几何平均置信度"
+                probability = np.exp(avg_log_prob)
+            else:
+                probability = 0.0
+
+            results.append({
+                "text": text.strip(),
+                "probability": round(float(probability), 6)
+            })
+
+        # 清理显存 (可选，但在大 Batch 循环中很有用)
+        del inputs, outputs, transition_scores
+        torch.cuda.empty_cache()
+        
         return results

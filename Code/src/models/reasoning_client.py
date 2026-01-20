@@ -26,7 +26,7 @@ class ReasoningAPIWrapper(BaseModel):
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}], 
-                max_tokens=300,      
+                max_tokens=4000,      
             )
             
             choice = response.choices[0]

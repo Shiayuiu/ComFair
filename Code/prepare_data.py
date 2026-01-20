@@ -5,7 +5,7 @@ from configs.adult import dataset_config
 
 def main():
     # 1. 确保目录存在
-    os.makedirs("data/processed/adult", exist_ok=True)
+    os.makedirs("data/processed/classification/adult", exist_ok=True)
     os.makedirs("data/results/predictions", exist_ok=True)
     os.makedirs("data/results/reports", exist_ok=True)
 

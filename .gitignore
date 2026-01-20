@@ -2,6 +2,13 @@ Code/data/results/
 Code/configs/__pycache__/
 Code/src/models/__pycache__/
 Code/src/data/__pycache__/
+Code/data/
+Code/src/data/
+Code/outputs/
+Code/scripts/classification/
+Code/scripts/recognition/
+Code/scripts/selection/
+IFB_v1/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
