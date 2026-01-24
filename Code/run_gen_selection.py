@@ -110,7 +110,7 @@ def main(args):
     results = []
     batch_size = args.batch_size
 
-    for i in tqdm(range(0, len(prompts), batch_size), desc="Inferencing"):
+    for i in tqdm(range(0, len(prompts), batch_size), desc="Inferencing", unit="batch"):
         batch_prompts = prompts[i : i + batch_size]
         batch_output = model.predict_batch_with_prob(batch_prompts)
         

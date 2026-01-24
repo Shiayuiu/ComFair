@@ -35,16 +35,26 @@ class OpenAIWrapper(BaseModel):
 
         while retry_count <= self.max_retries:
             try:
-                response = self.client.chat.completions.create(
-                    model=self.model_name,
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=max_new_tokens,
-                    # temperature=1.0,
-                    # The following line use in Qwen3
-                    extra_body={"enable_thinking": False},
-                    # logprobs=True,
-                    # top_logprobs=1
-                )
+                if 'Qwen' in self.model_name:
+                    # Qwen 系列模型的特殊处理
+                    response = self.client.chat.completions.create(
+                        model=self.model_name,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=max_new_tokens,
+                        # temperature=1.0,
+                        extra_body={"enable_thinking": False},
+                        # logprobs=True,
+                        # top_logprobs=1
+                    )
+                else:
+                    response = self.client.chat.completions.create(
+                        model=self.model_name,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=max_new_tokens,
+                        # temperature=1.0,
+                        # logprobs=True,
+                        # top_logprobs=1
+                    )
                 choice = response.choices[0]
                 text = choice.message.content.strip()
 

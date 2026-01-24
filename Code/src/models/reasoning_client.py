@@ -47,11 +47,11 @@ class ReasoningAPIWrapper(BaseModel):
             # 简单的重试逻辑或返回空
             return {"text": "Error", "probability": None}
 
-    def predict_batch(self, prompts: List[str], max_new_tokens=10) -> List[str]:
+    def predict_batch(self, prompts: List[str], max_new_tokens=4000) -> List[str]:
         results = self.predict_batch_with_prob(prompts, max_new_tokens)
         return [r['text'] for r in results]
 
-    def predict_batch_with_prob(self, prompts: List[str], max_new_tokens=300) -> List[Dict]:
+    def predict_batch_with_prob(self, prompts: List[str], max_new_tokens=4000) -> List[Dict]:
         """
         并发请求
         注意：Reasoning 模型通常较慢，并发数不宜过高，且超时时间可能需要更长

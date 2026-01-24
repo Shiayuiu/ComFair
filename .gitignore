@@ -8,7 +8,10 @@ Code/outputs/
 Code/scripts/classification/
 Code/scripts/recognition/
 Code/scripts/selection/
+Code/scripts/continuation/
+Code/scripts/conversation/
 IFB_v1/
+DataGeneration/_raw/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

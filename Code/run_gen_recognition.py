@@ -114,7 +114,7 @@ def main(args):
         prompts = prompts[:args.debug_n]
         all_samples = all_samples[:args.debug_n]
 
-    for i in tqdm(range(0, len(prompts), batch_size), desc="Inferencing"):
+    for i in tqdm(range(0, len(prompts), batch_size), desc="Inferencing", unit="batch"):
         batch_prompts = prompts[i : i + batch_size]
         batch_output = model.predict_batch_with_prob(batch_prompts)
         
