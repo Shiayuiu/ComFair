@@ -5,6 +5,8 @@ DataGeneration/
 Docs/
 IFB_v1/
 outputs/
-data/
+Code/src/data/
+Code/src/utils/
+Code/data/
 *.py[cod]
 *$py.class

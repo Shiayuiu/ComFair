@@ -3,15 +3,15 @@ import importlib
 
 def get_dataset_config(dataset_name: str):
     """
-    根据数据集名称动态加载对应的配置模块。
-    假设配置文件都位于 configs/ 目录下，命名为 [dataset_name].py，
-    并且其中必须包含一个名为 dataset_config 的实例。
+    Dynamically load the configuration module for the given dataset name.
+    Assumes config files are located in the configs/ directory named [dataset_name].py
+    and that each module contains an instance named `dataset_config`.
     """
     try:
-        # 动态 import，例如 dataset_name="adult" -> import configs.adult
+        # Dynamic import, e.g., dataset_name="adult" -> import configs.adult
         module = importlib.import_module(f"configs.{dataset_name}")
         
-        # 获取模块中的 dataset_config 对象
+        # Retrieve the dataset_config object from the module
         if hasattr(module, "dataset_config"):
             return module.dataset_config
         else:
