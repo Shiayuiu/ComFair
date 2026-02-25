@@ -77,7 +77,6 @@ class AdultConfig:
     
     sensitive_attributes: List[str] = field(default_factory=lambda: ["race", "gender", "age_group"])
 
-    # 标签解析映射
     label_map: Dict[str, int] = field(default_factory=lambda: {
         "A": 1, 
         "B": 0

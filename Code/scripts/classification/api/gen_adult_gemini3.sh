@@ -37,7 +37,7 @@ echo "========================================================"
 echo "Step 2: Model Inference (Generation)"
 echo "========================================================"
 # 运行生成脚本
-python run_gen.py \
+python run_gen_classification.py \
     --dataset "$DATASET" \
     --model_type "$MODEL_TYPE" \
     --model_name "$MODEL_NAME" \

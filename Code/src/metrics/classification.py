@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from sklearn.metrics import f1_score, recall_score, accuracy_score, precision_score, confusion_matrix
 
-# 检查
+# validation
 class ClassificationEvaluator:
     def __init__(self, data: pd.DataFrame, sensitive_attributes: list, min_group_size=30):
 

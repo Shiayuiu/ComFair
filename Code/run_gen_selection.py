@@ -24,11 +24,11 @@ def parse_response(response: str, label_map: dict) -> int:
     if not response:
         return -1
 
-    # 精确匹配
+    # Exact match
     if response in label_map:
         return label_map[response]
 
-    # 模糊匹配
+    # Fuzzy match
     for key in ["0", "1", "2"]:
         if key in response:
             return label_map.get(key, -1)
@@ -40,10 +40,10 @@ def parse_response(response: str, label_map: dict) -> int:
 # ------------------------------------------------------------
 def _parse_dim_attrs_from_filename(fname: str) -> Tuple[Optional[str], Optional[str], Optional[List[str]]]:
     """
-    支持命名规范：
+    Supported naming conventions:
       1d__<base>__<inject>.jsonl
       2d__<base>__<inject1>__<inject2>.jsonl
-    返回：dim, base, injects(list)
+    Returns: dim, base, injects (list)
     """
     if not fname.endswith(".jsonl"):
         return None, None, None
@@ -73,9 +73,9 @@ def match_dim_files(
     inject_attrs: Optional[List[str]] = None,
 ) -> List[str]:
     """
-    支持两种模式：
-    - base-driven（inject_attrs=None）：只按 base 匹配
-    - inject-driven（inject_attrs 指定）：同时约束 inject 组合
+    Supports two modes:
+    - base-driven (inject_attrs=None): match by base only
+    - inject-driven (inject_attrs specified): constrain inject combination
     """
     matched: List[str] = []
     inject_set = set(inject_attrs) if inject_attrs else None
@@ -131,7 +131,7 @@ def iter_samples_from_files(
     dataset_config
 ) -> Iterator[Tuple[Dict[str, Any], str]]:
     """
-    流式读取 + 逐条产出 (meta, prompt)
+    Stream read and yield (meta, prompt) per sample.
     """
     for file_path in target_files:
         with open(file_path, "r", encoding="utf-8") as f:
@@ -183,7 +183,8 @@ def count_lines(files: List[str]) -> int:
 # ------------------------------------------------------------
 def _call_with_timeout(model, batch_prompts: List[str], timeout_s: int) -> List[dict]:
     """
-    硬超时：predict_batch_with_prob 最多等待 timeout_s 秒，避免卡死。
+    Hard timeout: wait at most timeout_s seconds for predict_batch_with_prob.
+    Prevents hanging indefinitely.
     """
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
         fut = ex.submit(model.predict_batch_with_prob, batch_prompts)
@@ -198,9 +199,9 @@ def predict_batch_safe(
     min_batch_size: int = 1,
 ) -> List[dict]:
     """
-    - 超时/异常：重试
-    - 仍失败：对半拆分递归
-    - 最终兜底：单条仍失败 -> {"text": ""}，保证主流程继续
+    - Retry on timeout/exception
+    - If still failing: recursively split the batch
+    - Final fallback: return {"text": ""} for single failure
     """
     if not batch_prompts:
         return []
@@ -236,7 +237,7 @@ def predict_batch_safe(
 # ------------------------------------------------------------
 def load_finished_ids(tmp_jsonl: str) -> set:
     """
-    从已有 tmp_jsonl 读取已完成 sample_id，用于断点续跑。
+    Load completed sample_ids from existing tmp_jsonl for resume.
     """
     finished = set()
     if not os.path.exists(tmp_jsonl):
@@ -294,9 +295,7 @@ def main(args):
     for f in target_files:
         print("   -", os.path.basename(f))
 
-    # -----------------------------
     # Output paths
-    # -----------------------------
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     os.makedirs("data/results/predictions/selection", exist_ok=True)
 
@@ -308,7 +307,7 @@ def main(args):
     out_path = f"data/results/predictions/selection/{args.model_name}_{tag}_{timestamp}.parquet"
     tmp_jsonl = out_path.replace(".parquet", ".tmp.jsonl")
 
-    # ✅ 断点续跑：如果目录里已经有同模型同 tag 的 tmp 文件，优先复用最新的那个
+    # Resume: if tmp files exist for same model+tag, reuse the latest one
     pattern_tmp = f"data/results/predictions/selection/{args.model_name}_{tag}_*.tmp.jsonl"
     existing_tmps = sorted(glob.glob(pattern_tmp))
     if existing_tmps:
@@ -317,9 +316,7 @@ def main(args):
             tmp_jsonl = latest_tmp
             out_path = tmp_jsonl.replace(".tmp.jsonl", ".parquet")
 
-    # -----------------------------
     # Resume: load finished ids
-    # -----------------------------
     finished_ids = load_finished_ids(tmp_jsonl)
     if finished_ids:
         print(f">>> Detected existing tmp file, enabling resume: {tmp_jsonl}")
@@ -327,9 +324,7 @@ def main(args):
     else:
         print(f">>> Writing temp stream to: {tmp_jsonl}")
 
-    # -----------------------------
-    # Load Model (respect args)
-    # -----------------------------
+    # Load Model (respect CLI args)
     model_kwargs: Dict[str, Any] = {}
     if args.api_key:
         model_kwargs["api_key"] = args.api_key
@@ -351,9 +346,7 @@ def main(args):
         **model_kwargs,
     )
 
-    # -----------------------------
     # Runtime config
-    # -----------------------------
     timeout_s = int(os.getenv("SELECTION_TIMEOUT_S", "180"))
     max_retries = int(os.getenv("SELECTION_RETRY", "4"))
     checkpoint_every = int(os.getenv("SELECTION_CHECKPOINT_EVERY", "50"))
@@ -363,18 +356,14 @@ def main(args):
     print(f"    - max_retries       : {max_retries}")
     print(f"    - checkpoint_every  : {checkpoint_every}")
 
-    # -----------------------------
     # Progress total
-    # -----------------------------
     total_lines = count_lines(target_files)
     print(f">>> Total raw lines (approx samples): {total_lines}")
 
     if int(args.debug_n) > 0:
         print(f">>> DEBUG MODE enabled: debug_n={args.debug_n} (limits newly written samples)")
 
-    # -----------------------------
     # Streaming inference loop
-    # -----------------------------
     written_new = 0
     skipped_existing = 0
     fallback_empty = 0
@@ -396,7 +385,7 @@ def main(args):
             min_batch_size=1,
         )
 
-        # 对齐长度
+        # Align output length
         if len(batch_output) != len(buffer_prompts):
             print(f"[Warn] batch_output size mismatch: {len(batch_output)} vs {len(buffer_prompts)}; aligning...")
             if len(batch_output) < len(buffer_prompts):
@@ -423,17 +412,13 @@ def main(args):
         buffer_meta = []
         buffer_prompts = []
 
-    # 进度条：已完成的也算进度（更直观）
     pbar = tqdm(total=total_lines if total_lines > 0 else None, desc="Inferencing", unit="sample")
 
     try:
-        # ✅ 追加写，确保续跑不覆盖
         with open(tmp_jsonl, "a", encoding="utf-8") as fout:
-            # debug_n：限制“新写入”的样本数（跳过已完成的不算）
             debug_limit = int(args.debug_n) if int(args.debug_n) > 0 else None
 
             for meta, prompt in iter_samples_from_files(target_files, dataset_config):
-                # 达到 debug 限制就停止（先不 flush，下面会处理尾巴）
                 if debug_limit is not None and written_new >= debug_limit:
                     break
 
@@ -446,7 +431,6 @@ def main(args):
                 buffer_meta.append(meta)
                 buffer_prompts.append(prompt)
 
-                # 如果 debug 剩余不足一个 batch，就动态缩小 batch
                 if debug_limit is not None:
                     remaining = debug_limit - written_new
                     target_bs = min(int(args.batch_size), max(1, remaining))
@@ -461,7 +445,6 @@ def main(args):
                         fout.flush()
                         os.fsync(fout.fileno())
 
-            # flush 尾巴（也要尊重 debug_limit）
             if buffer_prompts:
                 if debug_limit is not None:
                     remaining = debug_limit - written_new
@@ -494,9 +477,7 @@ def main(args):
     if written_new > 0:
         print(f"    - empty/fallback responses:       {fallback_empty} ({fallback_empty / written_new * 100:.2f}%)")
 
-    # -----------------------------
-    # Convert tmp -> parquet (dedup by sample_id)
-    # -----------------------------
+    # Convert tmp -> parquet (deduplicate by sample_id)
     try:
         df = pd.read_json(tmp_jsonl, lines=True)
         if "sample_id" in df.columns:
@@ -530,7 +511,7 @@ if __name__ == "__main__":
     parser.add_argument("--base_url", type=str, default=None)
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--max_workers", type=int, default=5)
-    parser.add_argument("--debug_n", type=int, default=0)  # ✅ 现在生效：限制“新写入”的样本数
+    parser.add_argument("--debug_n", type=int, default=0)  # Limits number of newly written samples
 
     args = parser.parse_args()
     main(args)

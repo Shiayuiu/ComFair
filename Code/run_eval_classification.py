@@ -1,4 +1,4 @@
-# run_eval.py
+# run_eval_classification.py
 import argparse
 import pandas as pd
 import json
@@ -11,7 +11,7 @@ from src.metrics.functional import compute_basic_metrics
 from configs import get_dataset_config 
 
 class NpEncoder(json.JSONEncoder):
-    """解决 NumPy 数据类型无法 JSON 序列化的问题"""
+    """Handle NumPy data types that are not JSON serializable."""
     def default(self, obj):
         if isinstance(obj, np.integer): return int(obj)
         if isinstance(obj, np.floating): return float(obj)
@@ -19,7 +19,7 @@ class NpEncoder(json.JSONEncoder):
         return super(NpEncoder, self).default(obj)
 
 def apply_eval_transforms(df: pd.DataFrame, config) -> pd.DataFrame:
-    """[Process] 应用映射逻辑"""
+    """Apply column-wise evaluation transforms defined in config."""
     df_out = df.copy()
     if hasattr(config, 'eval_transforms'):
         for col, func in config.eval_transforms.items():
@@ -30,13 +30,13 @@ def apply_eval_transforms(df: pd.DataFrame, config) -> pd.DataFrame:
     return df_out
 
 def get_query_combinations(config, user_query_attrs: list) -> list:
-    """[Query] 解析属性组合"""
+    """Resolve attribute combinations for fairness evaluation."""
     base_attrs = user_query_attrs if user_query_attrs else getattr(config, 'sensitive_attributes', [])
     final_attrs = []
     transforms = getattr(config, 'eval_transforms', {})
     
     for attr in base_attrs:
-        # 如果该属性在转换列表中，自动指向映射后的列
+        # If the attribute has a transform, automatically use the mapped column
         if attr in transforms:
             final_attrs.append(f"{attr}_mapped")
         else:
@@ -68,70 +68,64 @@ def generate_markdown_report(json_path, output_path):
     markdown += "| Analysis Level / Condition | DP Gap | EO Gap | Unfairness Score |\n"
     markdown += "| :--- | :--- | :--- | :--- |\n"
 
-    # 遍历原有的交集结果
+    # Iterate through intersectional results
     for key, metrics in analysis.items():
         dp = metrics["DP_Gap"]["value"]
         eo = metrics["EO_Gap"]["value"]
         unf = metrics["Unfairness_Score"]
         markdown += f"| **{key}** (Base) | {dp:.4f} | {eo:.4f} | **{unf:.4f}** |\n"
 
-        # --- 核心逻辑：导出条件交叉性指标 ---
-        # 如果是交叉属性 (含有 '&')，则尝试拆解出 "race & gender: male" 等项
+        # Core logic: export conditional intersectional metrics
+        # If this is an intersectional attribute (contains '&'),
+        # derive conditional subgroup fairness metrics.
         if "&" in key:
             attr_names = [a.strip() for a in key.split("&")]
-            # 提取详细子群数据
             dp_details = metrics["DP_Gap"]["details"]
             eo_details = metrics["EO_Gap"]["details"]
 
-            # 找出该组合中涉及的所有单一属性值 (如 Male, Female, Black, White)
-            # 逻辑：对于 'race & gender'，如果固定 'Male'，我们就看不同 'race' 间的差距
             for i, fixed_attr in enumerate(attr_names):
-                # 确定要对比的另一个属性索引
                 target_attr_idx = 1 - i 
                 
-                # 找出 fixed_attr 维度的所有可能取值 (从 subgroup 字符串中解析)
-                # 例如从 "Black & Male" 中提取 "Male"
+                # Extract all possible values for the fixed attribute
                 unique_vals = set([s.split("&")[i].strip() for s in dp_details.keys()])
 
                 for val in unique_vals:
-                    # 过滤出符合当前条件 (如包含 "Male") 的子群
+                    # Filter subgroups matching the current condition
                     sub_pprs = {k: v for k, v in dp_details.items() if k.split("&")[i].strip() == val}
                     sub_eos = {k: v for k, v in eo_details.items() if k.split("&")[i].strip() == val}
 
                     if len(sub_pprs) > 1:
-                        # 计算条件 DP Gap
+                        # Conditional DP Gap
                         c_dp_gap = max(sub_pprs.values()) - min(sub_pprs.values())
                         
-                        # 计算条件 EO Gap
+                        # Conditional EO Gap
                         tprs = [v["tpr"] for v in sub_eos.values()]
                         fprs = [v["fpr"] for v in sub_eos.values()]
                         c_eo_gap = (max(tprs) - min(tprs)) + (max(fprs) - min(fprs))
                         
                         c_unf = (c_dp_gap + c_eo_gap) / 2
                         
-                        # 格式化名称: "race & gender: Male"
                         display_name = f"{key}: {val.lower()}"
                         markdown += f"| {display_name} | {c_dp_gap:.4f} | {c_eo_gap:.4f} | {c_unf:.4f} |\n"
 
-    # 保存
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(markdown)
     print(f"Report successfully generated at: {output_path}")
 
 def main(args):
-    # 0. 初始化与数据加载
+    # 0. Initialization and data loading
     print(f">>> [Init] Dataset: {args.dataset}")
     dataset_config = get_dataset_config(args.dataset)
     
     pred_df = pd.read_parquet(args.pred_path)
     
-    # 当dataset元数据不是csv格式时，你会需要调整这个
+    # Adjust this if metadata is not stored in CSV format
     meta_df = pd.read_csv(dataset_config.processed_metadata_path)
     
     full_df = pd.merge(pred_df, meta_df, on="sample_id", how="inner")
     original_count = len(full_df)
 
-    # 1. 过滤无效结果
+    # 1. Filter invalid predictions
     valid_df = full_df[full_df['pred_label'] != -1].copy()
     valid_count = len(valid_df)
     unparsable_count = original_count - valid_count
@@ -141,11 +135,11 @@ def main(args):
     print(f"    - Valid samples: {valid_count}")
     print(f"    - Unparsable (Dropped): {unparsable_count} ({unparsable_count/original_count:.2%})")
 
-    # 2. [Process] 动态映射 (基于有效样本)
+    # 2. Apply dynamic transforms based on valid samples
     eval_df = apply_eval_transforms(valid_df, dataset_config)
     has_prob = 'pred_prob' in eval_df.columns and not eval_df['pred_prob'].isnull().all()
     
-    # 3. [Eval] 初始化评估器
+    # 3. Initialize evaluator
     evaluator = IntersectionalEvaluator(
         eval_df, 
         label_col='label', 
@@ -153,58 +147,43 @@ def main(args):
         prob_col='pred_prob' if has_prob else None
     )
     
-    # 4. [Query] 确定组合
+    # 4. Determine attribute query combinations
     query_combinations = get_query_combinations(dataset_config, args.query_attrs)
     
-    # 5. [Eval Loop] 执行评估
+    # 5. Evaluation loop
     fairness_report = {}
     for group_keys in query_combinations:
         group_name = " & ".join(group_keys)
         
         try:
-            # === 核心改动：计算 DP, EO, Unfairness Score ===
             dp_metrics = evaluator.evaluate_demographic_parity(group_keys)
             eo_metrics = evaluator.evaluate_equalized_odds(group_keys)
             unfairness_score = evaluator.calculate_unfairness_score(dp_metrics, eo_metrics)
             
-            # 组织 metrics bundle
             metrics_bundle = {
-                # [New] 三大核心指标
                 "DP_Gap": dp_metrics,
                 "EO_Gap": eo_metrics,
                 "Unfairness_Score": unfairness_score,
-                
-                # [Existing] 基础指标 (不改动)
                 "accuracy_parity": evaluator.compute_subgroup_performance(group_keys, 'accuracy'),
-                "recall_parity": evaluator.compute_subgroup_performance(group_keys, 'recall'), # TPR Parity
+                "recall_parity": evaluator.compute_subgroup_performance(group_keys, 'recall'),
                 "disparate_impact": evaluator.evaluate_disparate_impact(group_keys)
             }
             
-            # [Optional] 概率相关指标
-            '''
-            if has_prob:
-                metrics_bundle["auc_parity"] = evaluator.compute_subgroup_performance(group_keys, 'auc')
-                metrics_bundle["calibration_ece"] = evaluator.evaluate_calibration_fairness(group_keys)
-            '''
-            
             fairness_report[group_name] = metrics_bundle
             
-        except KeyError as e:
+        except KeyError:
             continue
 
-    # 6. [Report] 路径处理逻辑 (FIXED)
+    # 6. Report path handling
     if args.output_path:
-        # 如果用户指定了路径，直接使用
         report_path = args.output_path
     else:
-        # 如果未指定，生成默认路径：data/results/reports/[model]-[dataset]-timestamp_report.json
-        # markdown: 
         report_filename = os.path.basename(args.pred_path).replace(".parquet", "_report.json")
         markdown_filename = os.path.basename(args.pred_path).replace(".parquet", "_report.md")
         report_path = os.path.join("data/results/reports/classification", report_filename)
         markdown_report_path = os.path.join("outputs/classification/", markdown_filename)
     
-    # 确保输出目录存在
+    # Ensure output directory exists
     output_dir = os.path.dirname(report_path)
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
@@ -228,7 +207,6 @@ def main(args):
         
     print(f">>> [Report] Successfully saved to: {report_path}")
 
-    # 生成Markdown报告
     generate_markdown_report(report_path, markdown_report_path)
 
 if __name__ == "__main__":

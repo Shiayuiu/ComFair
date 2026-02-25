@@ -8,24 +8,22 @@ import warnings
 
 class IntersectionalEvaluator:
     """
-    交叉公平性评估器
-    负责根据给定的 Group Keys 对 DataFrame 进行切片，并计算各项指标。
+    InersectionalEvaluator: for evaluating intersectional fairness by slicing data based on specified group keys
     """
     def __init__(self, df: pd.DataFrame, label_col: str = "label", pred_col: str = "pred_label", prob_col: str = None):
         self.df = df.copy()
         self.label_col = label_col
         self.pred_col = pred_col
         self.prob_col = prob_col
-        
-        # 检查
+
         if self.label_col not in self.df.columns or self.pred_col not in self.df.columns:
             raise ValueError(f"Missing columns. Required: {self.label_col}, {self.pred_col}")
 
     def _get_subgroup_data(self, group_keys: List[str], min_samples: int = 15) -> List[Dict]:
         """
-        核心切片逻辑：根据传入的 keys (例如 ['race', 'age_mapped']) 进行分组
+        Core slicing logic: group by the provided keys (e.g., ['race', 'age_mapped'])
         """
-        # 填充空值
+
         safe_keys = [self.df[k].fillna("Unknown") for k in group_keys]
         
         try:
@@ -38,7 +36,6 @@ class IntersectionalEvaluator:
             if len(group) < min_samples:
                 continue
             
-            # 格式化组名
             group_name = name if isinstance(name, tuple) else (name,)
             group_id = " & ".join([str(x) for x in group_name])
             
@@ -52,7 +49,7 @@ class IntersectionalEvaluator:
             
         return valid_subgroups
 
-    # --- 基础性能计算 ---
+    # --- Basic Metrics ---
     def compute_subgroup_performance(self, group_keys: List[str], metric: str = 'accuracy') -> Dict:
         subgroups = self._get_subgroup_data(group_keys)
         details = {}
@@ -67,7 +64,6 @@ class IntersectionalEvaluator:
             elif metric == 'precision':
                 val = precision_score(g['y_true'], g['y_pred'], zero_division=0)
             elif metric == 'auc':
-                # AUC 特殊处理：如果只有一个类别，无法计算
                 if len(np.unique(g['y_true'])) < 2 or g['y_prob'] is None:
                     val = 0.5 
                 else:
@@ -81,8 +77,7 @@ class IntersectionalEvaluator:
 
         return self._summarize_stats(metric, scores, details)
 
-    # --- 高级公平性指标 ---
-
+    # --- Intersectional Metrics ---
     def evaluate_disparate_impact(self, group_keys: List[str]) -> Dict:
         """Min(PPR) / Max(PPR)"""
         subgroups = self._get_subgroup_data(group_keys)
@@ -104,7 +99,7 @@ class IntersectionalEvaluator:
     
     def evaluate_demographic_parity(self, group_keys: List[str]) -> Dict:
         """
-        [DP Gap] 计算 Demographic Parity Gap
+        [DP Gap] Demographic Parity Gap
         Formula: Max(PPR) - Min(PPR)
         """
         subgroups = self._get_subgroup_data(group_keys)
@@ -122,7 +117,7 @@ class IntersectionalEvaluator:
         
         return {
             "metric": "Demographic Parity Gap (DP)",
-            "value": round(gap, 4), # 这就是 DP 值
+            "value": round(gap, 4), 
             "max_ppr": round(max(ppr_values), 4),
             "min_ppr": round(min(ppr_values), 4),
             "details": details
@@ -130,7 +125,7 @@ class IntersectionalEvaluator:
 
     def evaluate_equalized_odds(self, group_keys: List[str]) -> Dict:
         """
-        [EO Gap] 计算 Equalized Odds Gap
+        [EO Gap] Equalized Odds Gap
         Formula: (Max_TPR - Min_TPR) + (Max_FPR - Min_FPR)
         """
         subgroups = self._get_subgroup_data(group_keys)
@@ -156,7 +151,7 @@ class IntersectionalEvaluator:
         
         return {
             "metric": "Equalized Odds Gap (EO)",
-            "value": round(eo_gap, 4), # 这就是 EO 值
+            "value": round(eo_gap, 4), 
             "tpr_gap": round(tpr_gap, 4),
             "fpr_gap": round(fpr_gap, 4),
             "details": details
@@ -164,13 +159,12 @@ class IntersectionalEvaluator:
 
     def calculate_unfairness_score(self, dp_result: Dict, eo_result: Dict) -> float:
         """
-        [Composite Score] 计算综合不公平得分
-        Formula: (DP + EO) / 2
+        [Composite Score] Unf Score Formula: (DP + EO) / 2
         """
         try:
             dp = dp_result.get("value", 0.0)
             eo = eo_result.get("value", 0.0)
-            # 简单平均，也可以根据需求加权
+            # Average the two gaps to get a composite score, the weight can be adjusted as needed
             score = (dp + eo) / 2
             return round(score, 4)
         except:

@@ -16,10 +16,11 @@ from configs import get_dataset_config
 
 def parse_dim_file(fname: str):
     """
-    新命名协议：
+    Supported naming convention:
       1d__<base>__<inject>.jsonl
       2d__<base>__<inject1>__<inject2>.jsonl
-    返回 (dim, base, injects) 或 None
+
+    Returns (dim, base, injects) or None.
     """
     if not fname.endswith(".jsonl"):
         return None
@@ -40,7 +41,12 @@ def parse_dim_file(fname: str):
 
 
 def normalize_inject_attrs(inject_attrs):
-    """允许用户传入 'gender,race' 这种写法，统一拆开成 ['gender','race']"""
+    """
+    Normalize inject attributes.
+
+    Allows inputs such as "gender,race" and converts them into
+    ['gender', 'race'].
+    """
     if inject_attrs is None:
         return None
     fixed = []
@@ -62,8 +68,10 @@ def iter_records_from_files(
     dataset_config,
 ) -> Iterator[Dict]:
     """
-    逐行读取 JSONL，并生成 prompt，yield meta dict（包含 _prompt_for_inf）。
-    这样不会一次性把所有样本塞进内存，避免“假卡住”。
+    Stream JSONL files line by line and yield meta dictionaries
+    containing generated prompts.
+
+    This avoids loading all samples into memory at once.
     """
     for file_path in files:
         with open(file_path, "r", encoding="utf-8") as f:
@@ -80,6 +88,9 @@ def iter_records_from_files(
 
 
 def batched(iterator: Iterator[Dict], batch_size: int) -> Iterator[List[Dict]]:
+    """
+    Yield data in fixed-size batches.
+    """
     batch = []
     for item in iterator:
         batch.append(item)
@@ -91,6 +102,9 @@ def batched(iterator: Iterator[Dict], batch_size: int) -> Iterator[List[Dict]]:
 
 
 def safe_text(x) -> str:
+    """
+    Ensure non-empty string output.
+    """
     if x is None:
         return "[EMPTY]"
     x = str(x)
@@ -101,9 +115,12 @@ def safe_text(x) -> str:
 
 def run_predict_batch_with_timeout(model, prompts: List[str], max_new_tokens: int, timeout_s: int):
     """
-    给 predict_batch 增加超时。
-    注意：这依赖 ThreadPoolExecutor，无法强制杀死底层卡住的网络调用，
-    但可以让主流程“继续往下跑”，避免整个任务挂死。
+    Wrap predict_batch with a timeout mechanism.
+
+    Note:
+    This relies on ThreadPoolExecutor and cannot forcibly terminate
+    a blocked underlying network call. However, it allows the main
+    process to continue instead of hanging indefinitely.
     """
     import concurrent.futures
 
@@ -121,18 +138,22 @@ def run_predict_batch_with_timeout(model, prompts: List[str], max_new_tokens: in
 
 
 def main(args):
-    # 1) 加载配置
+    # ------------------------------------------------------------
+    # 1) Load dataset configuration
+    # ------------------------------------------------------------
     print(f">>> Loading config for dataset: {args.dataset}")
     dataset_config = get_dataset_config(args.dataset)
 
-    # 兼容旧用法：base_attrs 默认等于 attributes
+    # Backward compatibility: base_attrs defaults to attributes
     if args.base_attrs is None:
         args.base_attrs = args.attributes
 
-    # inject_attrs 规范化
+    # Normalize inject attributes
     args.inject_attrs = normalize_inject_attrs(args.inject_attrs)
 
-    # 2) 扫描文件（新命名优先；不匹配则 fallback 旧命名）
+    # ------------------------------------------------------------
+    # 2) Scan data files (new naming preferred; fallback to legacy)
+    # ------------------------------------------------------------
     target_files = []
     data_dir = getattr(dataset_config, "data_dir", "data/processed/continuation/")
     print(f">>> Scanning files in {data_dir}...")
@@ -144,22 +165,22 @@ def main(args):
         parsed = parse_dim_file(fname)
 
         if parsed is None:
-            # fallback：师兄旧逻辑（attr_*.jsonl）
+            # Fallback to legacy naming: <attr>_*.jsonl
             if fname.startswith(tuple([a + "_" for a in args.attributes])):
                 target_files.append(f)
             continue
 
         dim, base, injects = parsed
 
-        # 维度过滤
+        # Dimension filtering
         if args.eval_dim != "all" and dim != args.eval_dim:
             continue
 
-        # 主轴过滤
+        # Base attribute filtering
         if base not in args.base_attrs:
             continue
 
-        # 注入过滤（可选，集合精确匹配，顺序无关）
+        # Inject attribute filtering (set equality, order-invariant)
         if args.inject_attrs:
             if set(injects) != set(args.inject_attrs):
                 continue
@@ -170,13 +191,15 @@ def main(args):
     if not target_files:
         print("Error: No matching files found.")
         print(">>> Tips:")
-        print("  - New naming expects: 1d__<base>__<inj>.jsonl or 2d__<base>__<inj1>__<inj2>.jsonl")
-        print("  - Or fallback old naming: <attr>_*.jsonl where attr in --attributes")
+        print("  - Expected new naming: 1d__<base>__<inj>.jsonl or 2d__<base>__<inj1>__<inj2>.jsonl")
+        print("  - Legacy naming: <attr>_*.jsonl where attr in --attributes")
         return
 
     print(f">>> Found {len(target_files)} files.")
 
-    # 3) 加载目标模型
+    # ------------------------------------------------------------
+    # 3) Load target model
+    # ------------------------------------------------------------
     model_kwargs = {}
     if args.api_key:
         model_kwargs["api_key"] = args.api_key
@@ -188,15 +211,17 @@ def main(args):
     print(">>> Loading model...")
     model = load_model(
         model_type=args.model_type,
-        model_path_or_name=args.model_path,  # continuation 脚本就用 model_path 参数承载“模型名”
+        model_path_or_name=args.model_path,
         **model_kwargs,
     )
     print(">>> Model loaded.")
 
-    # 4) 逐批生成（边读边推理，避免一次性读全量）
+    # ------------------------------------------------------------
+    # 4) Stream inference (read and generate incrementally)
+    # ------------------------------------------------------------
     record_iter = iter_records_from_files(target_files, dataset_config)
 
-    # debug_n：只取前 N 条
+    # Limit number of samples in debug mode
     if args.debug_n and args.debug_n > 0:
         def _limited(it, n):
             c = 0
@@ -210,23 +235,17 @@ def main(args):
     os.makedirs("data/results/predictions/continuation", exist_ok=True)
     timestamp = time.strftime("%Y%m%d_%H%M%S")
 
-    # ✅ 改动：文件名带上 eval_dim（由 bash 的 --eval_dim 控制）
     dim_tag = getattr(args, "eval_dim", "unk")
     out_path = f"data/results/predictions/continuation/{args.model_name}__{dim_tag}__{timestamp}.parquet"
 
     results: List[Dict] = []
-    total_batches_est = None  # 流式读取无法精确知道总 batch，这里用 tqdm 的不定长模式
 
-    pbar = tqdm(desc="Generating", unit="batch", total=total_batches_est)
+    pbar = tqdm(desc="Generating", unit="batch")
     batch_id = 0
 
     for batch in batched(record_iter, args.batch_size):
         batch_id += 1
         prompts = [b["_prompt_for_inf"] for b in batch]
-
-        # 关键日志：让你知道确实开始请求了
-        if args.verbose:
-            print(f">>> [BATCH {batch_id}] calling API | size={len(prompts)} | max_new_tokens={args.max_new_tokens}")
 
         status, outs, err = run_predict_batch_with_timeout(
             model=model,
@@ -236,14 +255,10 @@ def main(args):
         )
 
         if status == "ok":
-            # outs 应该是 list[str]
             if not isinstance(outs, list):
-                # 某些 wrapper 可能返回单个字符串
                 outs = [outs] * len(batch)
 
-            # 对齐长度
             if len(outs) != len(batch):
-                # 不要直接崩，填充
                 fixed = []
                 for i in range(len(batch)):
                     fixed.append(outs[i] if i < len(outs) else "[MISSING_OUTPUT]")
@@ -258,7 +273,6 @@ def main(args):
                 results.append(meta2)
 
         elif status == "timeout":
-            # 超时：本 batch 全部标记 timeout
             for meta in batch:
                 meta2 = dict(meta)
                 meta2["raw_response"] = "[TIMEOUT]"
@@ -268,9 +282,7 @@ def main(args):
                 meta2.pop("_prompt_for_inf", None)
                 results.append(meta2)
 
-        else:  # error
-            # 出错：本 batch 全部标记 error
-            # 这里把 traceback 也记录一份，方便你定位（但不会刷屏）
+        else:
             tb = traceback.format_exc(limit=5)
             for meta in batch:
                 meta2 = dict(meta)
@@ -282,18 +294,16 @@ def main(args):
                 meta2.pop("_prompt_for_inf", None)
                 results.append(meta2)
 
-        # 每个 batch 都落一次盘（可选），避免中途挂了全没
+        # Periodic flushing to avoid total data loss
         if args.flush_every > 0 and (batch_id % args.flush_every == 0):
             df = pd.DataFrame(results)
             df.to_parquet(out_path, index=False)
-            if args.verbose:
-                print(f">>> [FLUSH] saved {len(results)} rows to {out_path}")
 
         pbar.update(1)
 
     pbar.close()
 
-    # 最终落盘
+    # Final save
     df = pd.DataFrame(results)
     df.to_parquet(out_path, index=False)
     print(f">>> Generation saved to {out_path}")
@@ -302,24 +312,22 @@ def main(args):
         print(df["status"].value_counts(dropna=False).to_string())
     except Exception:
         pass
-
-
+    
+# ------------------------------------------------------------
+# CLI
+# ------------------------------------------------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="holistic_continuation")
 
-    # 旧参数（保持 required=True，兼容你现有 bash）
     parser.add_argument("--attributes", nargs="+", required=True)
 
-    # 新增参数（跟 conversation 一样）
     parser.add_argument("--eval_dim", default="1d", choices=["1d", "2d", "all"])
     parser.add_argument("--base_attrs", nargs="+", default=None)
     parser.add_argument("--inject_attrs", nargs="+", default=None)
 
     parser.add_argument("--model_type", type=str, default="hf")
     parser.add_argument("--model_name", type=str, required=True)
-
-    # 这里依旧叫 model_path：在 api 模式下它承载“模型名”，在 hf 模式下就是路径
     parser.add_argument("--model_path", type=str, required=True)
 
     parser.add_argument("--api_key", type=str, default=None)
@@ -329,10 +337,8 @@ if __name__ == "__main__":
     parser.add_argument("--max_workers", type=int, default=5)
     parser.add_argument("--debug_n", type=int, default=0)
 
-    # continuation 特有
     parser.add_argument("--max_new_tokens", type=int, default=500, help="Length of continuation")
 
-    # 新增：稳住“卡住”的关键参数
     parser.add_argument("--request_timeout", type=int, default=180, help="Timeout seconds per batch API call")
     parser.add_argument("--flush_every", type=int, default=5, help="Flush to parquet every N batches; 0 disables")
     parser.add_argument("--verbose", action="store_true", help="Print per-batch logs")

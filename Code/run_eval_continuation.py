@@ -1,3 +1,4 @@
+# run_eval_continuation.py
 import argparse
 import pandas as pd
 import numpy as np
@@ -20,26 +21,32 @@ class NpEncoder(json.JSONEncoder):
         return super(NpEncoder, self).default(obj)
 
 
-INVALID_RAW_PATTERN = re.compile(r"^\s*$|\[TIMEOUT\]|\[ERROR\]|\[EMPTY\]|\[MISSING_OUTPUT\]", re.IGNORECASE)
+INVALID_RAW_PATTERN = re.compile(
+    r"^\s*$|\[TIMEOUT\]|\[ERROR\]|\[EMPTY\]|\[MISSING_OUTPUT\]",
+    re.IGNORECASE
+)
 
 
 def parse_score(response: str) -> float:
     """
-    解析 0-100 的整数分数：
-    1) 优先匹配 'score' / 'bias' 附近的数字（更稳）
-    2) 兜底：取最后一个 0-100 的数字
-    解析不到返回 -1
+    Parse an integer score in the range 0–100 from the judge response.
+
+    Strategy:
+    1) Prefer numbers appearing near keywords such as 'score' or 'bias'.
+    2) Fallback: extract the last integer within 0–100.
+
+    Return -1 if no valid score is found.
     """
     if not response:
         return -1.0
     text = str(response)
 
-    # 优先抓明确表述：score: 62 / bias score 62 等
+    # Prefer explicit expressions such as: score: 62 / bias score 62
     m = re.search(r"(score|bias)[^\d]{0,20}(100|[1-9]?[0-9])\b", text, re.IGNORECASE)
     if m:
         return float(m.group(2))
 
-    # 兜底：抓最后一个 0-100 的整数
+    # Fallback: extract the last integer in [0, 100]
     matches = re.findall(r"\b(100|[1-9]?[0-9])\b", text)
     if matches:
         return float(matches[-1])
@@ -49,14 +56,16 @@ def parse_score(response: str) -> float:
 
 def compute_aggr_mask_means_by_pair_id(base_rows: pd.DataFrame, aug_rows: pd.DataFrame) -> dict:
     """
-    严格按 pair_id 配对：
-      Δ = score(aug) - score(base)
+    Strictly align samples by pair_id:
 
-    返回你要展示的两列（条件均值）：
-      - aggr_mean_pos: mean(Δ | Δ>0)
-      - mask_mean_neg: mean(-Δ | Δ<0) = mean(score(base)-score(aug) | Δ<0)
+        Δ = score(aug) - score(base)
 
-    只使用 pred_score != -1 的样本；且 base/aug 同一对共享同一个 pair_id。
+    Return conditional means:
+        - aggr_mean_pos: mean(Δ | Δ > 0)
+        - mask_mean_neg: mean(score(base) - score(aug) | Δ < 0)
+
+    Only samples with pred_score != -1 are used.
+    Base and augmented rows must share the same pair_id.
     """
     if "pair_id" not in base_rows.columns or "pair_id" not in aug_rows.columns:
         return {"aggr_mean_pos": 0.0, "mask_mean_neg": 0.0, "n_pairs": 0}
@@ -71,9 +80,9 @@ def compute_aggr_mask_means_by_pair_id(base_rows: pd.DataFrame, aug_rows: pd.Dat
     if len(merged) == 0:
         return {"aggr_mean_pos": 0.0, "mask_mean_neg": 0.0, "n_pairs": 0}
 
-    delta = merged["pred_score_aug"] - merged["pred_score_base"]  # Δ = aug - base
+    delta = merged["pred_score_aug"] - merged["pred_score_base"]
 
-    # 条件均值：只在 Δ>0 / Δ<0 的样本上平均
+    # Conditional means over positive and negative deltas
     pos = delta[delta > 0]
     neg = delta[delta < 0]
 
@@ -139,33 +148,44 @@ def generate_markdown_report(report_data, output_path):
 
 def infer_dim_tag_from_df(df: pd.DataFrame) -> str:
     """
-    从 parquet 内容推断实际包含的维度：
-      - dim-1d / dim-2d / dim-mixed(1d+2d) / dim-base-only
-    规则：
-      base 行 add_attr == ""；
-      1d 行 add_attr 非空且不含逗号；
-      2d 行 add_attr 含逗号（如 gender,race）
+    Infer dimension tag from parquet content:
+
+      - dim-1d
+      - dim-2d
+      - dim-mixed(1d+2d)
+      - dim-base-only
+
+    Rules:
+      Base rows: add_attr == ""
+      1D rows: add_attr non-empty and without comma
+      2D rows: add_attr contains comma (e.g., gender,race)
     """
     if "add_attr" not in df.columns:
         return "dim-unknown"
+
     add_attr_series = df["add_attr"].fillna("").astype(str)
     non_base = add_attr_series[add_attr_series != ""]
+
     if len(non_base) == 0:
         return "dim-base-only"
+
     has_1d = (~non_base.str.contains(",")).any()
     has_2d = (non_base.str.contains(",")).any()
+
     if has_1d and has_2d:
         return "dim-mixed(1d+2d)"
     if has_2d:
         return "dim-2d"
     if has_1d:
         return "dim-1d"
+
     return "dim-base-only"
 
 
 def run_predict_batch_with_timeout(judge_model, prompts: List[str], max_new_tokens: int, timeout_s: int):
     """
-    给 judge_model.predict_batch 增加超时，避免第三方中转“半挂起”导致整条任务卡死。
+    Add timeout control to judge_model.predict_batch to prevent the pipeline
+    from hanging due to stalled third-party API calls.
     """
     import concurrent.futures
 
@@ -184,24 +204,23 @@ def run_predict_batch_with_timeout(judge_model, prompts: List[str], max_new_toke
 
 
 def safe_format_judge_prompt(template: str, model_response: str) -> str:
-    # 防止 template 缺字段导致异常
+    """
+    Safely format judge prompt to avoid runtime errors caused by
+    missing placeholders in the template.
+    """
     try:
         return template.format(model_response=model_response)
     except Exception:
-        # 极端情况下兜底
         return f"{template}\n\nMODEL_RESPONSE:\n{model_response}"
-
-
+    
 def main(args):
     print(f">>> Loading predictions: {args.pred_path}")
     df = pd.read_parquet(args.pred_path)
     dataset_config = get_dataset_config(args.dataset)
 
-    # pred_score 初始化
     if "pred_score" not in df.columns:
         df["pred_score"] = -1.0
 
-    # 可选：eval_dim 过滤（默认 all 不过滤）
     if args.eval_dim != "all":
         if "add_attr" not in df.columns:
             print(">>> [WARN] add_attr not found; skip eval_dim filtering.")
@@ -216,7 +235,6 @@ def main(args):
 
     dim_tag = infer_dim_tag_from_df(df)
 
-    # 只评 pred_score==-1 且 raw_response 有效的
     if "raw_response" not in df.columns:
         raise RuntimeError("pred parquet missing 'raw_response' column; cannot judge.")
 
@@ -231,7 +249,6 @@ def main(args):
     print(f">>> Need scoring (pred_score==-1 & valid raw): {total_need}")
     print(f">>> Skipped invalid raw_response (still pred_score==-1): {invalid_cnt}")
 
-    # 初始化 judge
     judge_model = None
     if total_need > 0:
         print(f">>> Initializing Judge: {args.judge_model_path} ({args.judge_model_name})")
@@ -243,7 +260,6 @@ def main(args):
             max_workers=args.max_workers,
         )
 
-        # 中间落盘路径（可恢复）
         timestamp_mid = time.strftime("%Y%m%d_%H%M%S")
         judge_clean_mid = args.judge_model_path.replace("/", "-")
         mid_filename = f"{args.model_name}_{dim_tag}_{args.judge_model_name}_{judge_clean_mid}_{timestamp_mid}_scoring_inprogress.parquet"
@@ -281,7 +297,7 @@ def main(args):
             if status == "ok":
                 if not isinstance(outs, list):
                     outs = [outs] * len(batch_idxs)
-                # 对齐长度
+
                 if len(outs) != len(batch_idxs):
                     outs = [outs[i] if i < len(outs) else "" for i in range(len(batch_idxs))]
 
@@ -299,7 +315,6 @@ def main(args):
 
             processed_batches += 1
 
-            # 定期落盘：防中途中断
             if args.flush_every > 0 and (processed_batches % args.flush_every == 0):
                 df.to_parquet(mid_path, index=False)
                 if args.verbose:
@@ -307,26 +322,22 @@ def main(args):
                     print(f">>> [FLUSH] saved progress to {mid_path} | scored_total={done}/{len(df)} "
                           f"| ok_scored_in_run={scored_ok} | timeouts={timeouts} | errors={errors}")
 
-        # 最后落一次
         df.to_parquet(mid_path, index=False)
         print(f">>> [Progress] In-progress scored parquet saved to: {mid_path}")
         print(f">>> [Run Summary] ok_scored={scored_ok} | timeouts={timeouts} | errors={errors}")
     else:
         print(">>> No valid samples need scoring. Skipping Judge calls.")
 
-    # 最终输出文件名
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     judge_clean = args.judge_model_path.replace("/", "-")
     base_filename = f"{args.model_name}_{dim_tag}_{args.judge_model_name}_{judge_clean}_{timestamp}"
 
-    # 保存最终 scored parquet
     data_output_dir = "data/results/reports/continuation"
     os.makedirs(data_output_dir, exist_ok=True)
     scored_parquet_path = os.path.join(data_output_dir, f"{base_filename}.parquet")
     df.to_parquet(scored_parquet_path, index=False)
     print(f">>> Scored data saved to: {scored_parquet_path}")
 
-    # 统计分析（只统计 pred_score != -1 的）
     report = {
         "meta": {
             "model": args.model_name,
@@ -345,7 +356,6 @@ def main(args):
             "count": int(len(valid)),
         }
 
-    # 分组统计（在原统计基础上，仅为每个 augmented subgroup 追加 overlay 两列）
     required_cols = {"base_attr", "add_attr", "pair_type", "add_attr_value"}
     if required_cols.issubset(set(df.columns)):
         if "pair_id" not in df.columns:
@@ -376,12 +386,10 @@ def main(args):
     else:
         print(">>> [WARN] Some required columns missing for group analysis; report.analysis may be empty.")
 
-    # 保存 JSON
     json_path = os.path.join(data_output_dir, f"{base_filename}_report.json")
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=4, cls=NpEncoder)
 
-    # 保存 Markdown（表格会多两列）
     md_output_dir = "outputs/continuation"
     os.makedirs(md_output_dir, exist_ok=True)
     md_path = os.path.join(md_output_dir, f"{base_filename}.md")
@@ -395,23 +403,13 @@ if __name__ == "__main__":
     parser.add_argument("--pred_path", type=str, required=True)
     parser.add_argument("--model_name", type=str, required=True)
     parser.add_argument("--dataset", type=str, default="holistic_continuation")
-
-    # Judge 参数
     parser.add_argument("--judge_model_name", type=str, required=True, help="Display name for report")
     parser.add_argument("--judge_model_path", type=str, required=True, help="API model ID")
     parser.add_argument("--judge_api_key", type=str, default=None)
     parser.add_argument("--judge_base_url", type=str, default=None)
-
-    # 并发（注意：第三方中转不宜太大）
     parser.add_argument("--max_workers", type=int, default=12)
-
-    # 评估维度过滤
     parser.add_argument("--eval_dim", default="all", choices=["1d", "2d", "all"])
-
-    # 你只要 0-100 数字，64~96 足够；越大越慢越容易卡
     parser.add_argument("--judge_max_new_tokens", type=int, default=64)
-
-    # 防卡死关键参数
     parser.add_argument("--judge_batch_size", type=int, default=4, help="Judge batch size (4 is a good default)")
     parser.add_argument("--request_timeout", type=int, default=45, help="Timeout seconds per judge batch call")
     parser.add_argument("--flush_every", type=int, default=10, help="Flush progress every N judge batches (0 disables)")

@@ -7,6 +7,8 @@ IFB_v1/
 outputs/
 Code/src/data/
 Code/src/utils/
+Code/src/models/.ipynb[]
 Code/data/
+Code/scripts/api_example/
 *.py[cod]
 *$py.class

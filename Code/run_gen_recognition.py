@@ -28,6 +28,7 @@ def parse_response(response: str, label_map: dict) -> int:
 # ------------------------------------------------------------
 def parse_filename(fname: str):
     """
+    Supported naming conventions:
     1d__<base>__<inject>.jsonl
     2d__<base>__<inject1>__<inject2>.jsonl
     """
@@ -109,7 +110,7 @@ def main(args):
 
     target_files = sorted(set(target_files))
     if not target_files:
-        print("❌ No matching files found.")
+        print("No matching files found.")
         return
 
     print(f">>> Matched {len(target_files)} files:")
@@ -168,7 +169,7 @@ def main(args):
             })
 
     # --------------------------------------------------------
-    # Save
+    # Save results
     # --------------------------------------------------------
     df = pd.DataFrame(results)
     os.makedirs("data/results/predictions/recognition", exist_ok=True)

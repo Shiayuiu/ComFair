@@ -18,7 +18,7 @@ class NpEncoder(json.JSONEncoder):
 
 
 def compute_metrics(df: pd.DataFrame, prefix: str = "") -> dict:
-    """计算 Acc, Recall, F1（）"""
+    """Compute Accuracy, Recall, and F1 score."""
     if len(df) == 0:
         return {}
 
@@ -44,7 +44,7 @@ def compute_metrics(df: pd.DataFrame, prefix: str = "") -> dict:
 
 
 def calculate_consistency(base_df: pd.DataFrame, aug_df: pd.DataFrame) -> float:
-    """计算一致性: 同一个 pair_id 下预测结果是否相同（保持师兄逻辑不变）"""
+    """Compute prediction consistency under the same pair_id."""
     b_valid = base_df[base_df["pred_label"] != -1][["pair_id", "pred_label"]]
     a_valid = aug_df[aug_df["pred_label"] != -1][["pair_id", "pred_label"]]
 
@@ -56,13 +56,15 @@ def calculate_consistency(base_df: pd.DataFrame, aug_df: pd.DataFrame) -> float:
     return round(matches / len(merged), 4)
 
 
-# ✅ 新增：只加新指标（aggravation / masking），且 pred_label == -1 的样本直接抛弃
 def compute_flip_metrics(base_df: pd.DataFrame, aug_df: pd.DataFrame) -> dict:
     """
+    Compute flip-based fairness metrics.
+
     aggravation = (# base correct but aug wrong) / (# base correct)
     masking     = (# base wrong but aug correct) / (# base wrong)
 
-    丢弃规则：只统计 pair_id 对齐，且 base/aug 都 pred_label != -1 的样本。
+    Only aligned pair_id samples are considered, and samples with
+    pred_label == -1 in either base or augmented predictions are excluded.
     """
     if len(base_df) == 0 or len(aug_df) == 0:
         return {"aggravation": float("nan"), "masking": float("nan")}
@@ -74,7 +76,7 @@ def compute_flip_metrics(base_df: pd.DataFrame, aug_df: pd.DataFrame) -> dict:
     if len(m) == 0:
         return {"aggravation": float("nan"), "masking": float("nan")}
 
-    # 丢弃 -1：只要 base 或 aug 是 -1，这个样本直接抛弃
+    # Drop samples where either base or augmented prediction equals -1
     m = m[(m["pred_label_base"] != -1) & (m["pred_label_aug"] != -1)]
     if len(m) == 0:
         return {"aggravation": float("nan"), "masking": float("nan")}
@@ -99,7 +101,7 @@ def compute_flip_metrics(base_df: pd.DataFrame, aug_df: pd.DataFrame) -> dict:
 
 
 def generate_markdown_report(report_data, output_path):
-    """Markdown 报告生成（保持师兄逻辑不变）"""
+    """Generate Markdown evaluation report."""
     model = report_data["meta"]["model"]
     dataset = report_data["meta"]["dataset"]
 
@@ -122,7 +124,7 @@ def generate_markdown_report(report_data, output_path):
                 add_attr_name = key
 
             md += f"### Perturbation: {add_attr_name.capitalize()}\n"
-            md += "This table compares the model's performance on the original context (Base) vs contexts injected with specific attribute values.\n\n"
+            md += "This table compares model performance between base and attribute-augmented contexts.\n\n"
 
             md += "| Context / Subgroup | Accuracy | Recall | F1 Score | Acc Gap (Base-Aug) | Consistency | aggravation | masking |\n"
             md += "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n"
@@ -167,11 +169,10 @@ def main(args):
 
     df = pd.read_parquet(args.pred_path)
 
-    # 新增：按 eval_dim 过滤（不改变原计算逻辑，只是筛选输入数据）
-    # 规则：
-    # - 1d: add_attr 不含逗号（例如 "race" / "gender"）
-    # - 2d: add_attr 含逗号（例如 "gender,race"）
-    # - all: 不过滤
+    # Filter input data according to evaluation dimensionality.
+    # 1d: add_attr does not contain comma (e.g., "race" / "gender")
+    # 2d: add_attr contains comma (e.g., "gender,race")
+    # all: no filtering
     if args.eval_dim == "1d":
         df = df[df["add_attr"].fillna("").str.contains(",") == False]
     elif args.eval_dim == "2d":
@@ -190,11 +191,9 @@ def main(args):
         "analysis": {},
     }
 
-    # === 第一层：按 Base Attr 分组 ===
     for base_attr, base_group_df in df.groupby("base_attr"):
         attr_report = {}
 
-        # === 第二层：按 Add Attr 分组 ===
         for add_attr, sub_group_df in base_group_df.groupby("add_attr"):
             sub_report = {
                 "base_metrics": {},
@@ -202,12 +201,12 @@ def main(args):
                 "summary": {},
             }
 
-            # 1. Base 数据计算
+            # Compute metrics for base samples
             base_data = sub_group_df[sub_group_df["pair_type"] == "base"]
             base_metrics = compute_metrics(base_data)
             sub_report["base_metrics"] = base_metrics
 
-            # 2. Augmented 数据计算 (按 Value 分组)
+            # Compute metrics for augmented samples grouped by attribute value
             aug_data_all = sub_group_df[sub_group_df["pair_type"] == "augmented"]
 
             gaps = []
@@ -223,7 +222,7 @@ def main(args):
                 consistency = calculate_consistency(base_data, val_data)
                 consistencies.append(consistency)
 
-                # ✅ 新增：aggravation / masking（只新增，不改其他逻辑）
+                # Compute flip-based metrics (aggravation / masking)
                 flip = compute_flip_metrics(base_data, val_data)
 
                 aug_metrics["acc_gap_from_base"] = acc_gap

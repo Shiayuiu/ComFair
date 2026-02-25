@@ -1,93 +1,92 @@
-# run_gen.py
+# run_gen_classification.py
 import re
 import argparse
 import pandas as pd
 import os
 import time
-from configs import get_dataset_config  # Dynamic Import
+from configs import get_dataset_config
 from src.models import load_model
-
-### [MOD] 1) 新增：tqdm 进度条
 from tqdm import tqdm
+
 
 def parse_response_backup(response_text: str, label_map: dict) -> int:
     """
-    简单解析器，将模型输出映射为 0 或 1。
-    如果无法解析，返回 -1
+    Simple parser that maps model output to a binary label (0 or 1).
+
+    Returns -1 if parsing fails.
     """
-    # 简单清洗：去掉标点
     clean_text = response_text.strip().upper().replace(".", "")
 
-    # 优先精确匹配
+    # Exact match first
     if clean_text in label_map:
         return label_map[clean_text]
 
-    # 模糊匹配 (处理 "Option A", "Result: A" 等情况)
+    # Fuzzy match (e.g., "Option A", "Result: A")
     for key, val in label_map.items():
         if key in clean_text:
             return val
 
-    return -1  # 解析失败
+    return -1
+
 
 def parse_response(response_text: str, label_map: dict) -> int:
     """
-    鲁棒的解析器：优先匹配开头的单个字母，防止匹配到解释文本中的字符。
+    Robust parser that prioritizes matching the leading token
+    to avoid accidental matches inside explanation text.
     """
     if not response_text:
         return -1
 
     text = response_text.strip().upper()
 
-    # 策略 1 (最优先)：直接提取第一个“单词”进行匹配
-    # 能够解决 "B\n\nExplanation..." 或 "A." 或 "A," 的情况
-    # 按空白字符切分，取第一个
+    # Strategy 1: match the first token
     first_token = text.split()[0]
-
-    # 去除单词末尾的标点 (例如 "A." -> "A", "B," -> "B")
     clean_token = re.sub(r"[^\w]", "", first_token)
 
     if clean_token in label_map:
         return label_map[clean_token]
 
-    # 策略 2 (备选)：如果开头是 "Answer: A" 这种格式
-    # 使用正则寻找独立的 "A" 或 "B"
+    # Strategy 2: regex-based boundary match (e.g., "Answer: A")
     for key, val in label_map.items():
-        # 正则逻辑：
-        # (?:^|\s)  : 前面必须是 开头 或者 空格/换行
-        # key       : 匹配 A 或 B
-        # (?:\.|,|$|\s): 后面必须是 标点、结尾 或者 空格
-        # 这样可以防止匹配到 "Apple" 中的 "A" 或 "Label" 中的 "B"
         pattern = fr"(?:^|\s|:){key}(?:\.|,|$|\s)"
         if re.search(pattern, text):
             return val
 
-    return -1  # 解析失败
+    return -1
+
 
 def main(args):
-
-    # 1. 准备配置和路径
+    # ------------------------------------------------------------
+    # 1) Load dataset configuration and prepare output path
+    # ------------------------------------------------------------
     print(f"Loading configuration for dataset: {args.dataset}")
-    dataset_config = get_dataset_config(args.dataset)  # 关键修改
+    dataset_config = get_dataset_config(args.dataset)
+
     output_dir = "data/results/predictions/classification/"
     os.makedirs(output_dir, exist_ok=True)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    output_file = os.path.join(output_dir, f"{args.model_name}-{args.dataset}-{timestamp}.parquet")
+    output_file = os.path.join(
+        output_dir,
+        f"{args.model_name}-{args.dataset}-{timestamp}.parquet"
+    )
 
-    # 2. 加载数据 (只加载 feature csv)
+    # ------------------------------------------------------------
+    # 2) Load processed feature file
+    # ------------------------------------------------------------
     print(f"Loading features from {dataset_config.processed_feature_path}...")
     df = pd.read_csv(dataset_config.processed_feature_path)
 
-    # 调试模式：只跑前 N 条
+    # Debug mode: limit to first N samples
     if args.debug_n > 0:
         df = df.head(args.debug_n)
 
-    # 3. 构建 Prompts
-    # 利用 DataFrame 的行与 Config 中的 map 动态构建
+    # ------------------------------------------------------------
+    # 3) Construct prompts dynamically
+    # ------------------------------------------------------------
     print("Constructing prompts...")
     prompts = []
 
     for _, row in df.iterrows():
-        # 动态将 standard_key 转换为 row 中的实际列名
         format_dict = {
             std_key: row[csv_col]
             for std_key, csv_col in dataset_config.column_mapping.items()
@@ -95,57 +94,54 @@ def main(args):
         prompt = dataset_config.prompt_template.format(**format_dict)
         prompts.append(prompt)
 
-    # 4. 加载模型
-    # 构造参数字典
+    # ------------------------------------------------------------
+    # 4) Load model
+    # ------------------------------------------------------------
     model_kwargs = {}
     if args.api_key:
-        model_kwargs['api_key'] = args.api_key
+        model_kwargs["api_key"] = args.api_key
     if args.base_url:
-        model_kwargs['base_url'] = args.base_url
+        model_kwargs["base_url"] = args.base_url
 
-    # 统一加载
     model = load_model(
         model_type=args.model_type,
-        model_path_or_name=args.model_path,  # 对于 API，这里传入 "gpt-4" 等名称
+        model_path_or_name=args.model_path,
         **model_kwargs
     )
 
-    # 5. 批量推理
+    # ------------------------------------------------------------
+    # 5) Batched inference
+    # ------------------------------------------------------------
     print(f"Running inference on {len(prompts)} samples...")
     batch_size = args.batch_size
 
     all_raw_texts = []
     all_preds = []
-    all_probs = []  # <--- 新增：存储概率
+    all_probs = []
 
-    ### [MOD] 2) 替换：用 tqdm 做“按样本数”的进度条（不会再只有 0 和跑满）
-    # 原逻辑是 i%100 打印，i 是 batch 起始索引，很多情况下只会打印 0
     pbar = tqdm(total=len(prompts), desc="Inference", unit="sample")
 
     for i in range(0, len(prompts), batch_size):
         batch_prompts = prompts[i: i + batch_size]
-
-        # 调用新方法
         batch_results = model.predict_batch_with_prob(batch_prompts)
 
         for res in batch_results:
-            text = res['text']
-            prob = res['probability']
+            text = res["text"]
+            prob = res["probability"]
 
-            # 解析标签 (A->1, B->0)
             pred_label = parse_response(text, dataset_config.label_map)
 
             all_raw_texts.append(text)
             all_preds.append(pred_label)
-            all_probs.append(prob)  # <--- 存储
+            all_probs.append(prob)
 
-        ### [MOD] 3) 新增：每完成一个 batch，就按实际返回条数更新进度
         pbar.update(len(batch_results))
 
-    ### [MOD] 4) 新增：结束时关闭进度条
     pbar.close()
 
-    # 6. 结果整合与保存
+    # ------------------------------------------------------------
+    # 6) Aggregate and save results
+    # ------------------------------------------------------------
     result_df = pd.DataFrame({
         "sample_id": df["sample_id"],
         "prompt": prompts,
@@ -155,24 +151,32 @@ def main(args):
         "model_name": args.model_name
     })
 
-    # 过滤解析失败的 (-1) 可以在这里做，也可以在 Eval 阶段做
-    # result_df = result_df[result_df['pred_label'] != -1]
-
     result_df.to_parquet(output_file, index=False)
     print(f"Predictions saved to {output_file}")
 
+# ------------------------------------------------------------
+# Main
+# ------------------------------------------------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+
     parser.add_argument("--dataset", type=str, default="adult", help="Dataset name")
-    parser.add_argument("--model_name", type=str, default="Qwen2.5-1.5B", help="Model name identifier")
-    parser.add_argument("--model_path", type=str, required=True, help="Local path or HF hub path")
+    parser.add_argument("--model_name", type=str, default="Qwen2.5-1.5B", help="Model identifier")
+    parser.add_argument("--model_path", type=str, required=True, help="Local path or HuggingFace hub path")
+
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--debug_n", type=int, default=0, help="Run only N samples for debugging")
 
-    parser.add_argument("--model_type", type=str, default="hf", choices=["hf", "api", "reasoning_api"],
-                        help="Model backend type: 'hf' for local HuggingFace, 'api' for OpenAI-compatible APIs, 'reasoning_api' for Reasoning models. ")
-    parser.add_argument("--api_key", type=str, default=None, help="API Key for API models")
-    parser.add_argument("--base_url", type=str, default=None, help="Base URL for API models")
+    parser.add_argument(
+        "--model_type",
+        type=str,
+        default="hf",
+        choices=["hf", "api", "reasoning_api"],
+        help="Backend type: local HuggingFace or API-based model"
+    )
+
+    parser.add_argument("--api_key", type=str, default=None, help="API key for API-based models")
+    parser.add_argument("--base_url", type=str, default=None, help="Base URL for API-based models")
 
     args = parser.parse_args()
     main(args)

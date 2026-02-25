@@ -54,7 +54,7 @@ fi
 
 # 运行评估脚本
 # eval $EVAL_CMD
-python run_eval.py \
+python run_eval_classification.py \
     --dataset $DATASET \
     --model_name "$MODEL_NAME" \
     --pred_path "$LATEST_PRED" \
