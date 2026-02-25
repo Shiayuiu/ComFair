@@ -1,5 +1,10 @@
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
+DataGeneration/
+Docs/
+IFB_v1/
+outputs/
+data/
 *.py[cod]
 *$py.class
