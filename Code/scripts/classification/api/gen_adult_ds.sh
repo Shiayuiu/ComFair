@@ -1,43 +1,31 @@
 #!/bin/bash
 
-# --- 配置区域 ---
+# --- Configuration ---
 
-# 数据集路径
-RAW_DATA_PATH="./data/raw/adult.csv"
+# Dataset path
 DATASET="adult"
 
-# 模型参数
+# Model parameters
 MODEL_TYPE="api"
 MODEL_NAME="Deepseek-V3.2-chat"
 MODEL_PATH="deepseek-chat"
-BASE_URL="https://api.anthropic.com/v1" # 替换为你的API Base URL
+BASE_URL="https://api.anthropic.com/v1" # Replace with your API Base URL
 API_KEY=
 
-# 任务参数
+# Task parameters
 BATCH_SIZE=8
-DEBUG_N=0 # 设置为 10 可以只跑前10条用于测试，设置为 0 跑全量
+DEBUG_N=0 # Set to 10 to run only the first 10 examples for testing; set to 0 to run all
 
-# --- 执行区域 ---
-
-echo "========================================================"
-echo "Step 0: Checking Environment"
-echo "========================================================"
-# 简单的目录检查
-if [ ! -f "$RAW_DATA_PATH" ]; then
-    echo "Error: Raw data not found at $RAW_DATA_PATH"
-    exit 1
-fi
-
+# --- Execution ---
 echo "========================================================"
 echo "Step 1: Data Preprocessing"
 echo "========================================================"
-# 运行数据准备脚本
-# skip
+# Run data preparation script (if applicable)
 
 echo "========================================================"
 echo "Step 2: Model Inference (Generation)"
 echo "========================================================"
-# 运行生成脚本
+# Run generation script
 python run_gen_classification.py \
     --dataset "$DATASET" \
     --model_type "$MODEL_TYPE" \

@@ -1,5 +1,5 @@
-
 # Byte-compiled / optimized / DLL files
+.ipynb_checkpoints/
 __pycache__/
 DataGeneration/
 Docs/
@@ -7,8 +7,11 @@ IFB_v1/
 outputs/
 Code/src/data/
 Code/src/utils/
-Code/src/models/.ipynb_checkpoints/
 Code/data/
 Code/scripts/api_example/
 *.py[cod]
 *$py.class
+*.log
+*.ckpt
+*.pth
+*.pt

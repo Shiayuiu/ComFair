@@ -1,48 +1,42 @@
 #!/bin/bash
 
-# --- 配置区域 ---
+# -------------------------------
+# Configuration
+# -------------------------------
 
-# 数据集路径
-RAW_DATA_PATH="./data/raw/adult.csv"
+# Dataset configuration
+DATASET="adult"
 
-# 模型路径 (可以是 HuggingFace ID，也可以是绝对路径)
+# Model configuration
+MODEL_TYPE="api"
+MODEL_NAME="YOUR_MODEL_NAME"
+MODEL_PATH="YOUR_MODEL_IDENTIFIER"
+BASE_URL="https://your-api-base-url.com/v1"
+API_KEY="YOUR_API_KEY"
 
-# MODEL_PATH="Qwen/Qwen2.5-1.5B-Instruct" 
-# your model path
-API_KEYS=""
-MODEL_NAME="gpt5-nano"
-MODEL_PATH="/zhdd/home/yfwu/model/Qwen2.5-1.5B-Instruct/"
+# Runtime parameters
+BATCH_SIZE=8
+# Set DEBUG_N=10 to run only the first 10 samples for testing.
+# Set DEBUG_N=0 to process the full dataset.
+DEBUG_N=0
 
-# 任务参数
-# BATCH_SIZE=8
-DEBUG_N=0  # 设置为 10 可以只跑前10条用于测试，设置为 0 跑全量
-
-# --- 执行区域 ---
-
-echo "========================================================"
-echo "Step 0: Checking Environment"
-echo "========================================================"
-# 简单的目录检查
-if [ ! -f "$RAW_DATA_PATH" ]; then
-    echo "Error: Raw data not found at $RAW_DATA_PATH"
-    exit 1
-fi
+# -------------------------------
+# Execution
+# -------------------------------
 
 echo "========================================================"
-echo "Step 1: Data Preprocessing"
+echo "Step 1: Model Inference (Generation)"
 echo "========================================================"
-# 运行数据准备脚本
 
-echo "========================================================"
-echo "Step 2: Model Inference (Generation)"
-echo "========================================================"
-# 运行生成脚本
-python run_gen.py \
-    --dataset adult \
+python run_gen_classification.py \
+    --dataset "$DATASET" \
+    --model_type "$MODEL_TYPE" \
     --model_name "$MODEL_NAME" \
     --model_path "$MODEL_PATH" \
     --batch_size $BATCH_SIZE \
-    --debug_n $DEBUG_N
+    --debug_n $DEBUG_N \
+    --api_key "$API_KEY" \
+    --base_url "$BASE_URL"
 
 if [ $? -eq 0 ]; then
     echo "========================================================"
