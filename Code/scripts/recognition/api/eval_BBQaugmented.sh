@@ -1,16 +1,6 @@
 #!/bin/bash
 
 # --- 配置区域 ---
-# MODEL_NAME="claude-3-5-sonnet-20241022"
-# MODEL_NAME="claude-3-7-sonnet-20250219"
-# MODEL_NAME="Deepseek-V3.2-reasoner"
-# MODEL_NAME="Deepseek-V3.2-chat"
-# MODEL_NAME="Gemini-3-Flash"
-# MODEL_NAME="GPT-5-mini"
-# MODEL_NAME="llama-3.1-8b-instruct"
-# MODEL_NAME="llama-3.3-70b-instruct"
-# MODEL_NAME="Qwen3-235B-A22B"
-# MODEL_NAME="Qwen3-8B"
 
 DATASET="bbq_recognition"
 MODEL_NAME="claude-3-5-sonnet-20241022"

@@ -1,182 +1,122 @@
-# Intersectional\_Fairness\_alpha
+# README for Beyond Single-Attribute Auditing: A Configurable Multi-Attribute Benchmark for Fairness in LLMs
 
-**A Modular Framework for Evaluating Large Language Model Intersectional Fairness**
+# ComFair Library
 
-本项目旨在建立一个用于评估大语言模型（LLMs）在**交叉公平性（Intersectional Fairness）上的调研与评测框架。不同于单一维度的公平性评估，本框架专注于捕捉多重属性（如“黑人+女性+高龄”）组合下的涌现性偏见（Emergent Bias）**。
+本仓库提供了 `ComFair` ，一个可配置的用于评估大型语言模型在不同任务上的交叉公平性（intersectional fairness）的Benchmark. 下面说明代码组织、环境依赖、运行方法、数据集结构与常见目录说明，帮助您快速实现评测。
 
-设计理念参考了 **OpenCompass** 和 **CEB** 的架构，强调数据流解耦、配置化管理以及学术级指标的全面性。
+## **主要内容与核心特性**
 
----
+* **解耦架构 (Decoupled Pipeline)**: 将推理（Generation）与评估（Evaluation）完全分离。
+* **动态交叉查询 (Dynamic Intersectional Query)**: 支持通过 Query 列表（如 `['race', 'gender']`）动态生成交叉子群体进行评估，无需硬编码分组逻辑。
+* **多维评估指标 (Comprehensive Metrics)**: 通过基础指标和交叉公平性指标，ComFair能够给出一个模型的多维评分。
+* **配置驱动 (Config-Driven)**: 支持通过用户自行导入配置文件快速接入新数据集，实现自由的评测扩展。
 
-## 核心特性 (Key Features)
+## **快速开始**
 
-* **解耦架构 (Decoupled Pipeline)**: 将推理（Generation）与评估（Evaluation）完全分离。推理阶段只接触脱敏特征，评估阶段结合元数据（Metadata）进行分析，确保测试的纯粹性与隐私安全。
-* **动态交叉查询 (Dynamic Intersectional Query)**: 支持通过 Query 列表（如 `['race', 'gender']`）动态生成交叉子群，无需硬编码分组逻辑。
-* **多维评估指标 (Comprehensive Metrics)**: 不仅包含传统的 Demographic Parity，还集成了 Differential Fairness ($\epsilon$-fairness)、Calibration Error (ECE)、Disparate Impact 等高级指标。
-* **配置驱动 (Config-Driven)**: 支持通过配置文件快速接入新数据集（Adult, COMPAS, German等），自动处理字段映射与 Prompt 构建。
-* **标准化中间件**: 采用 `Parquet` 格式存储带有置信度（Probability）的中间推理结果，支持断点续传与高效读取。
+### 环境配置
 
----
-
-## 仓库结构 (Directory Structure)
-
-```text
-code/
-├── configs/
-│   ├── __init__.py             # 动态配置加载器
-│   ├── adult.py                # Adult 数据集配置 (字段映射, Prompt模板)
-│   └── [dataset].py            # 扩展其他数据集
-├── data/
-│   ├── raw/                    # 原始 CSV/JSON 数据
-│   ├── processed/              # 预处理后的数据 (清洗完毕)
-│   │   ├── [dataset]_features.csv   # 模型输入: sample_id + 文本特征
-│   │   └── [dataset]_metadata.csv   # 评测真值: sample_id + 敏感属性 + GT
-│   └── results/
-│       ├── predictions/        # 中间结果 (Parquet): pred_label, pred_prob
-│       └── reports/            # 最终报告 (JSON): 包含所有交叉公平性指标
-├── src/
-│   ├── data/
-│   │   ├── preprocess_adult.py # 数据清洗逻辑
-│   ├── models/
-│   │   ├── huggingface.py      # HF 模型封装 (支持 Logits 提取)
-│   ├── metrics/
-│   │   ├── functional.py       # 基础指标 (Acc, F1, Recall)
-│   │   └── intersectional.py   # 核心: 交叉分组逻辑与高级公平性计算
-├── run_gen.py                  # 阶段 I: 推理 (LLM -> Parquet)
-├── run_eval.py                 # 阶段 II: 评估 (Parquet + Metadata -> Report)
-├── run.sh                      # 一键运行脚本
-└── prepare_data.py             # 数据准备入口
-```
-
----
-
-## 评估方法论 (Methodology)
-
-### 1\. 分类任务评估流程
-
-我们采用 **“生成-查询-度量”** 的三步走策略：
-
-1. **特征提取与 Prompt 构建**:
-   假定数据集 $A$ 中有样本集合 $X$。对于每一个 $x_i$，我们提取其非敏感属性 $a_j$ 构建 Prompt，令模型完成二分类预测（如：“预测年收入是否大于50k”）。
-
-   * *Input*: `{age_group: '24-40', education: 'Bachelors', ...}`
-   * *Output*: `y_pred` (Label) & `y_prob` (Confidence)
-2. **中间结果存储**:
-   系统将生成结果与原始属性解耦存储。评估时，通过 `sample_id` 将预测结果与 `Metadata` 表中的敏感属性（如种族、性别）对齐。
-
-   > **数据对齐表项格式**:
-   > `Item: {sample_id, a_1:val_1, ..., a_n:val_n, y_pred, y_real, y_prob}`
-   >
-3. **交叉查询 (Intersectional Query)**:
-   评估器接受一个敏感属性集合 $S = \{a_{j1}, a_{j2}, ..., a_{jn}\}$ 作为 Query。
-
-   * *Query*: `['race', 'gender']`
-   * *Action*: 系统自动生成所有可能的组合（如 `Black-Female`, `White-Male`...），并计算子群间的差异。
-
-### 2\. 属性名对齐 (Attribute Alignment)
-
-为了最小化跨数据集评测的迁移成本，我们将不同数据集的字段映射到以下标准集合：
-
-* `gender`: 性别 (Male, Female, ...)
-* `age_group`: 年龄分桶 (24-40, 40-60, 60+)
-* `race`: 种族
-* `edu_level`: 教育程度
-* `work_class`: 工作性质
-
----
-
-## 支持指标 (Supported Metrics)
-
-本框架在 `src/metrics/intersectional.py` 中实现了以下指标体系：
-
-| 类别                  | 指标名称                                       | 描述                                      | 适用场景                           |
-| :-------------------- | :--------------------------------------------- | :---------------------------------------- | :--------------------------------- |
-| **基础性能**    | Accuracy / F1                                  | 总体及各子群的预测准确性                  | 通用                               |
-| **基础公平性**  | **Demographic Parity**                   | 正例预测率 (PPR) 的差异                   | 关注结果均等                       |
-|                       | **Equalized Odds**                       | TPR (Recall) 和 FPR 的差异                | 关注错误率均等                     |
-| **交叉公平性**  | **Differential Fairness ($\epsilon$)** | 任意两子群间预测概率比的对数最大值        | 严格的交叉偏见检测                 |
-|                       | **Disparate Impact**                     | Min(PPR) / Max(PPR)                       | 法律合规性 (80% Rule)              |
-|                       | **Worst-case Accuracy**                  | 表现最差子群的准确率                      | 关注短板效应                       |
-| **高级/置信度** | **Group ECE**                            | 群体校准误差 (Expected Calibration Error) | 衡量模型是否对某些群体“盲目自信” |
-|                       | **Treatment Equality**                   | FN/FP 比率的差异                          | 衡量模型在不同群体上的错误倾向     |
-
----
-
-## 快速开始 (Quick Start)
-
-### 1\. 环境准备
+1. 克隆仓库并进入目录：
 
 ```bash
+git clone https://github.com/Shiayuiu/Intersectional_Fairness_alpha ComFair
+cd ComFair
+```
+
+2. 使用 conda 创建虚拟环境：
+
+```bash
+conda create -n ComFair python=3.10 -y
+conda activate ComFair
 pip install -r requirements.txt
-# 主要依赖: torch, transformers, pandas, pyarrow, scikit-learn
 ```
 
-### 2\. 数据准备
+如果使用其它环境管理工具（如 `venv`、`pipenv`、`poetry`），请按相应方式安装 `requirements.txt` 中列出的依赖。
 
-将原始数据（如 `adult.csv`）放置在 `data/raw/` 目录下，运行清洗脚本：
+注意：如果您仅需要进行API类模型的评测而不需要在本地部署模型，请忽略 `requirements.txt`中关于CUDA的部分
+
+### 数据准备
+
+我们的数据已经在Huggingface上开源，您可以通过如下的链接访问我们的数据，然后将其下载并存放到本仓库的 `Code/data/` 文件目录下，以使得我们的评估器能够正确读取文件。
+
+[ComFair: A Configurable Multi-Attribute Benchmark](https://huggingface.co/datasets/benchmark-lab/Intersectional_Fairness_alpha_v2/tree/main "ComFair: Configurable Multi-Attribute Benchmark ")
+
+注意：数据路径被我们硬编码在了 `Code/configs/` 文件夹的对应路径中，如果你需要自行指定数据的存放位置，请修改config文件中的 `data_dir` 参数
+
+您需要在 `Code/data/` 目录下新建 `processed/` 目录以保证config文件的一致性，在这一步之后，您的 `data/` 目录应当具有如下的形式：
+
+```
+data/
+└── processed/              # 处理后的数据, 即我们提供的数据
+    ├── recognition/
+    ├── ...
+    └── selection/
+```
+
+### **运行方法**
+
+我们采用Generation和Evaluation两个步骤来评测您的模型，所有任务对应的python文件位于  `Code/` 目录下，形如 `run_gen_[task_name].py` 和 `run_eval_[task_name].py` . 您可以直接使用命令行方式评测，但我们更推荐您使用脚本评测，以便于指定需要的参数。为了方便您理解脚本的结构，我们在 `Code/scripts/` 目录下保留了我们在评测模型时所用的脚本，并提供了两个示例脚本和相关说明，供您参考。
+
+**Step1: Generation**
+
+在 `Code/scripts/` 目录下有我们提供的示例，在这个脚本中，我们指定了：
+
+* 数据集
+* 评估维度，即我们针对多少个交叉属性
+* 基准属性，即我们考察哪个属性所受的交叉公平影响，用于显式匹配数据集文件
+* 模型类型：API模型
+* 模型名称以及模型的标识（如 `deepseek-chat` ）
+* Base_url以及API_key
+* 一些其余参数
+
+运行如下的命令，模型会自行读取对应数据集中的config文件并运行生成，将中间结果存放在 `Code/data/results/predicitons/[task]/` 目录中，您可以查看命令行打印的信息来获取详细位置，然后可以执行单独的Eval流程。
 
 ```bash
-python prepare_data.py
+$ cd Code/
+$ bash scripts/example_gen_recognition.sh
 ```
 
-此步骤会生成 `data/processed/` 下的 feature 和 metadata 文件。
+**Step2: Evaluation**
 
-### 3\. 一键运行 (Pipeline)
+我们仍以Eval的脚本距离，在我们提供的示例脚本中，我们指定了如下参数：
 
-参考 `Scripts/gen_adult_dataset.sh` 中的写法，直接编辑 `run.sh` 设置模型路径和数据集名称，然后运行：
+* 数据集
+* 模型名称
+* 评估维度
+* 中间文件路径，即PRED_DIR
+
+然后，执行命令：
 
 ```bash
-bash run.sh
+$ bash scripts/example_eval_recognition.sh
 ```
 
-**或者分步运行：**
+在这一步之后，您可以在 `data/results/reports/recognition/` 目录下找到对应的结果文件。
 
-* **Step 1: 模型推理**
 
-  ```bash
-  python run_gen.py \
-      --dataset adult \
-      --model_path "Qwen/Qwen2.5-1.5B-Instruct" \
-      --batch_size 8
-  ```
+### **数据集与目录结构**
 
-  *输出*: `data/results/predictions/Qwen2.5-1.5B-adult-[timestamp].parquet`
-* **Step 2: 公平性评估**
+现在，我们重新整理一下数据的结构，在你运行成功一次示例脚本后，您的 `data/` 目录应当形如下面的结构：
 
-  ```bash
-  python run_eval.py \
-      --pred_path "data/results/predictions/..." \
-      --dataset adult
-  ```
-
-  *输出*: `data/results/reports/..._report.json`
-
----
-
-## 配置指南 (Configuration)
-
-如需添加新数据集（例如 COMPAS），请在 `code/configs/` 下新建 `compass.py`：
-
-```python
-from dataclasses import dataclass, field
-
-@dataclass
-class CompassConfig:
-    dataset_name: str = "compass"
-    # 定义 CSV 列名到标准属性名的映射
-    column_mapping: Dict[str, str] = field(default_factory=lambda: {
-        "gender": "sex",
-        "race": "race_code",
-        # ...
-    })
-    # 定义 Prompt 模板
-    prompt_template: str = "..."
-    # 定义用于交叉评估的敏感属性列表
-    sensitive_attributes: List[str] = field(default_factory=lambda: ["race", "gender"])
-
-dataset_config = CompassConfig()
+```
+data/
+├── processed/              # 预处理后的数据，即我们提供的数据
+│   ├── recognition/
+│   ├── ...
+│   └── selection/
+└── results/
+    ├── predictions/        # 预测结果
+    └── reports/            # 报告
 ```
 
-然后在脚本中通过 `--dataset compass` 调用即可。
+- `data/processed/`：按任务划分的已处理数据目录：
+  - `continuation/`、`conversation/`、`recognition/`、`selection/` 等，每个子目录存放对应任务所需的数据集文件（为 JSON或JSONL 格式）。
+- `data/results/`：评估中产生的中间/最终结果：
+  - `predictions/`：模型预测输出。
+  - `reports/`：评估报告。
 
----
+## **添加新数据或新配置**
+
+您可以参照如下的步骤加入您自己的数据集用于评测：
+
+- 在 `Code/configs/` 中添加新的配置文件（通过类似的结构），并在运行脚本中指定新配置文件。
+- 将您的数据集对齐我们提供的数据集格式。
