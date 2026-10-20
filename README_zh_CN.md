@@ -1,4 +1,4 @@
-# README for Beyond Single-Attribute Auditing: A Configurable Multi-Attribute Benchmark for Fairness in LLMs
+# README for Beyond Single-Attribute Auditing: A Configurable Multi-Attribute Benchmark for Intersectional Fairness in LLMs
 
 # ComFair Library
 
