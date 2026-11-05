@@ -2,7 +2,7 @@
 
 **Beyond Single-Attribute Auditing: A Configurable Multi-Attribute Benchmark for Intersectional Fairness in LLMs**
 
-[Paper](https://arxiv.org/abs/2610.35069) · [Dataset](https://huggingface.co/datasets/benchmark-lab/ComFair) · [中文文档](README_zh_CN.md)
+[EMNLP 2026 · Main Conference](https://aclanthology.org/2026.emnlp-main.1875/) · [arXiv](https://arxiv.org/abs/2610.35069) · [Dataset](https://huggingface.co/datasets/benchmark-lab/ComFair) · [中文文档](README_zh_CN.md)
 
 ComFair is a configurable benchmark for auditing intersectional fairness in large language models. It pairs source instances with task-preserving, multi-attribute counterparts across four tasks: **Recognition, Selection, Continuation, and Conversation**. Generation and evaluation run separately, so saved predictions can be evaluated independently.
 
@@ -13,10 +13,10 @@ git clone https://github.com/Shiayuiu/ComFair.git
 cd ComFair
 conda create -n comfair python=3.10 -y
 conda activate comfair
-python -m pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu128
+python -m pip install -r requirements.txt
 ```
 
-The pinned dependencies target Linux with CUDA 12.8. API inference does not require a local GPU, but the current model loader still imports PyTorch and Transformers.
+API inference does not require a local GPU, but the current model loader still imports PyTorch and Transformers. For a CPU-only setup, run `python -m pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu` before installing the requirements.
 
 ## Data preparation
 
@@ -71,12 +71,17 @@ To use a custom dataset, follow the corresponding task's JSONL schema and filena
 ## Citation
 
 ```bibtex
-@article{zhang2026comfair,
-  title={Beyond Single-Attribute Auditing: A Configurable Multi-Attribute Benchmark for Intersectional Fairness in LLMs},
-  author={Zhang, Zheng and Wu, Yifan and Zhou, Yuxiang and Liu, Qi and Mao, Qingyang and Li, Ning and Gao, Weibo and Shi, Qiyuan and Huang, Zhenya and Yu, Baosheng},
-  journal={arXiv preprint arXiv:2610.35069},
+@inproceedings{zhang-etal-2026-beyond-single,
+  title={Beyond Single-Attribute Auditing: A Configurable Multi-Attribute Benchmark for Intersectional Fairness in {LLM}s},
+  author={Zhang, Zheng and Wu, Yifan and Zhou, Yuxiang and Liu, Qi and Mao, Qingyang and Li, Ning and Gao, Weibo and Shi, QiYuan and Huang, Zhenya and Yu, Baosheng},
+  booktitle={Proceedings of the 2026 Conference on Empirical Methods in Natural Language Processing},
+  month=oct,
   year={2026},
-  url={https://arxiv.org/abs/2610.35069}
+  address={Budapest, Hungary},
+  publisher={Association for Computational Linguistics},
+  pages={42742--42762},
+  doi={10.18653/2026.emnlp-main.1875},
+  url={https://aclanthology.org/2026.emnlp-main.1875/}
 }
 ```
 

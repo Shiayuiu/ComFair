@@ -2,7 +2,7 @@
 
 **Beyond Single-Attribute Auditing: A Configurable Multi-Attribute Benchmark for Intersectional Fairness in LLMs**
 
-[论文](https://arxiv.org/abs/2610.35069) · [数据集](https://huggingface.co/datasets/benchmark-lab/ComFair) · [English](README.md)
+[EMNLP 2026 主会论文](https://aclanthology.org/2026.emnlp-main.1875/) · [arXiv](https://arxiv.org/abs/2610.35069) · [数据集](https://huggingface.co/datasets/benchmark-lab/ComFair) · [English](README.md)
 
 ComFair 是用于审计大语言模型交叉公平性的可配置基准，将源样本与保持任务语义的多属性增强样本配对，覆盖 **Recognition、Selection、Continuation 和 Conversation** 四类任务。生成与评估分开运行，保存的预测结果可以独立评估。
 
@@ -13,10 +13,10 @@ git clone https://github.com/Shiayuiu/ComFair.git
 cd ComFair
 conda create -n comfair python=3.10 -y
 conda activate comfair
-python -m pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu128
+python -m pip install -r requirements.txt
 ```
 
-固定依赖面向 Linux / CUDA 12.8 环境。API 推理不需要本地 GPU，但当前模型加载入口仍会导入 PyTorch 和 Transformers。
+API 推理不需要本地 GPU，但当前模型加载入口仍会导入 PyTorch 和 Transformers。如需仅安装 CPU 版 PyTorch，请先运行 `python -m pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu`，再安装 requirements。
 
 ## 数据准备
 
@@ -71,12 +71,17 @@ Code/
 ## 引用
 
 ```bibtex
-@article{zhang2026comfair,
-  title={Beyond Single-Attribute Auditing: A Configurable Multi-Attribute Benchmark for Intersectional Fairness in LLMs},
-  author={Zhang, Zheng and Wu, Yifan and Zhou, Yuxiang and Liu, Qi and Mao, Qingyang and Li, Ning and Gao, Weibo and Shi, Qiyuan and Huang, Zhenya and Yu, Baosheng},
-  journal={arXiv preprint arXiv:2610.35069},
+@inproceedings{zhang-etal-2026-beyond-single,
+  title={Beyond Single-Attribute Auditing: A Configurable Multi-Attribute Benchmark for Intersectional Fairness in {LLM}s},
+  author={Zhang, Zheng and Wu, Yifan and Zhou, Yuxiang and Liu, Qi and Mao, Qingyang and Li, Ning and Gao, Weibo and Shi, QiYuan and Huang, Zhenya and Yu, Baosheng},
+  booktitle={Proceedings of the 2026 Conference on Empirical Methods in Natural Language Processing},
+  month=oct,
   year={2026},
-  url={https://arxiv.org/abs/2610.35069}
+  address={Budapest, Hungary},
+  publisher={Association for Computational Linguistics},
+  pages={42742--42762},
+  doi={10.18653/2026.emnlp-main.1875},
+  url={https://aclanthology.org/2026.emnlp-main.1875/}
 }
 ```
 
