@@ -1,121 +1,85 @@
-# README for Beyond Single-Attribute Auditing: A Configurable Multi-Attribute Benchmark for Intersectional Fairness in LLMs
+# ComFair: Intersectional Fairness Benchmark for LLMs
 
-# ComFair Library
+**Beyond Single-Attribute Auditing: A Configurable Multi-Attribute Benchmark for Intersectional Fairness in LLMs**
 
-This repository provides **ComFair**, a configurable benchmark for evaluating the intersectional fairness of large language models across different tasks. The following sections describe the code organization, environment dependencies, running methods, dataset structure, and common directory instructions to help you quickly implement evaluations.
+[Paper](https://arxiv.org/abs/2610.35069) · [Dataset](https://huggingface.co/datasets/benchmark-lab/ComFair) · [中文文档](README_zh_CN.md)
 
-## **Main Contents and Core Features**
+ComFair is a configurable benchmark for auditing intersectional fairness in large language models. It pairs source instances with task-preserving, multi-attribute counterparts across four tasks: **Recognition, Selection, Continuation, and Conversation**. Generation and evaluation run separately, so saved predictions can be evaluated independently.
 
-* **Decoupled Pipeline**: Completely separates inference (Generation) from evaluation (Evaluation).
-* **Dynamic Intersectional Query**: Supports dynamic generation of intersectional subgroups for evaluation via a query list (e.g., `['race', 'gender']`), eliminating the need for hard-coded grouping logic.
-* **Comprehensive Metrics**: Through basic metrics and intersectional fairness metrics, ComFair provides a multi-dimensional score for a model.
-* **Config-Driven**: Supports rapid integration of new datasets by importing user-defined configuration files, enabling flexible evaluation expansion.
-
-## **Quick Start**
-
-### Environment Setup
-
-1. Clone the repository and navigate into the directory:
+## Installation
 
 ```bash
-git clone https://github.com/Shiayuiu/Intersectional_Fairness_alpha ComFair
+git clone https://github.com/Shiayuiu/ComFair.git
 cd ComFair
+conda create -n comfair python=3.10 -y
+conda activate comfair
+python -m pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu128
 ```
 
-2. Create a virtual environment using conda:
+The pinned dependencies target Linux with CUDA 12.8. API inference does not require a local GPU, but the current model loader still imports PyTorch and Transformers.
+
+## Data preparation
+
+Accept the access conditions on the [dataset page](https://huggingface.co/datasets/benchmark-lab/ComFair), then authenticate and download from the repository root:
 
 ```bash
-conda create -n ComFair python=3.10 -y
-conda activate ComFair
-pip install -r requirements.txt
+hf auth login
+hf download benchmark-lab/ComFair --repo-type dataset --local-dir Code/data/ComFair
 ```
 
-If you use other environment management tools (e.g., `venv`, `pipenv`, `poetry`), install the dependencies listed in `requirements.txt` accordingly.
+Copy the JSONL files from each downloaded folder into its task directory, preserving filenames:
 
-Note: If you only need to evaluate API-based models without deploying models locally, please ignore the CUDA-related parts in `requirements.txt`.
+| Downloaded folder | Task directory |
+| --- | --- |
+| `Code/data/ComFair/v3/Recog_v3/` | `Code/data/processed/recognition/` |
+| `Code/data/ComFair/v3/Select_v3/` | `Code/data/processed/selection/` |
+| `Code/data/ComFair/v3/Continue_v3/` | `Code/data/processed/continuation/` |
+| `Code/data/ComFair/v3/Conversation_v3/` | `Code/data/processed/conversation/` |
 
-### Data Preparation
+Alternatively, set `data_dir` in the relevant file under [`Code/configs/`](Code/configs/) to the downloaded task folder. Relative paths are resolved from `Code/` when running the commands below.
 
-Our data has been open-sourced on Huggingface. You can access our data via the link below, then download and place it in the `Code/data/` directory of this repository so that our evaluator can correctly read the files.
+## Usage
 
-[ComFair: A Configurable Multi-Attribute Benchmark](https://huggingface.co/datasets/benchmark-lab/Intersectional_Fairness_alpha_v2/tree/main "ComFair: Configurable Multi-Attribute Benchmark ")
-
-Note: The data path is hard-coded in the corresponding configuration files in the `Code/configs/` folder. If you need to specify a custom data location, please modify the `data_dir` parameter in the config file.
-
-You need to create a `processed/` directory under `Code/data/` to maintain consistency with the config files. After this step, your `data/` directory should have the following structure:
-
-```
-data/
-└── processed/              # Processed data, i.e., the data we provide
-    ├── recognition/
-    ├── ...
-    └── selection/
-```
-
-### **Running Instructions**
-
-We evaluate your model using two steps: Generation and Evaluation. The corresponding Python files for each task are located in the `Code/` directory, named as `run_gen_[task_name].py` and `run_eval_[task_name].py`. You can evaluate directly via the command line, but we recommend using scripts for evaluation to easily specify required parameters. To help you understand the script structure, we have kept the scripts we used for model evaluation in the `Code/scripts/` directory and provided two example scripts with related instructions for your reference.
-
-**Step 1: Generation**
-
-In the `Code/scripts/` directory, we provide examples. In this script, we specify:
-
-* Dataset
-* Evaluation dimensions, i.e., the number of intersectional attributes we consider
-* Base attribute, i.e., which attribute's intersectional fairness impact we examine, used to explicitly match dataset files
-* Model type: API model
-* Model name and identifier (e.g., `deepseek-chat`)
-* Base_url and API_key
-* Some other parameters
-
-Run the following command, and the model will automatically read the corresponding dataset's config file, perform generation, and store the intermediate results in the `Code/data/results/predictions/[task]/` directory. You can check the information printed on the command line for the exact location, then proceed with a separate evaluation process.
+Run task scripts from `Code/`. For a Recognition example, edit [`example_gen_recognition.sh`](Code/scripts/example_gen_recognition.sh) to set the model identifier, model name, API endpoint, credentials, and data filters. Set the same `MODEL_NAME` and `EVAL_DIM` in [`example_eval_recognition.sh`](Code/scripts/example_eval_recognition.sh), then run:
 
 ```bash
-$ cd Code/
-$ bash scripts/example_gen_recognition.sh
+cd Code
+bash scripts/example_gen_recognition.sh
+bash scripts/example_eval_recognition.sh
 ```
 
-**Step 2: Evaluation**
+`EVAL_DIM=1d` adds one attribute to the base instance; `2d` adds two; `all` includes both. Use `BASE_ATTRS` to select the source attribute and `DEBUG_N` to limit generation for a small trial (`0` processes all matched samples).
 
-Continuing with the evaluation script example, in the provided example script we specify the following parameters:
+Each task has `run_gen_<task>.py` and `run_eval_<task>.py` entry points. Additional scripts are in `Code/scripts/<task>/`. Continuation and Conversation evaluation also require a judge model and its API configuration; see each entry point's `--help` for arguments.
 
-* Dataset
-* Model name
-* Evaluation dimensions
-* Intermediate file path, i.e., PRED_DIR
+## Repository structure
 
-Then execute the command:
-
-```bash
-$ bash scripts/example_eval_recognition.sh
+```text
+Code/
+├── configs/           # Dataset paths, field mappings, and prompts
+├── scripts/           # Example and task-specific launch scripts
+├── src/models/        # API and local Hugging Face model backends
+├── src/metrics/       # Shared evaluation utilities
+├── run_gen_*.py       # Generation entry points
+└── run_eval_*.py      # Evaluation entry points
 ```
 
-After this step, you can find the corresponding result files in the `data/results/reports/recognition/` directory.
+Predictions are saved to `Code/data/results/predictions/<task>/`, structured reports to `Code/data/results/reports/<task>/`, and Markdown reports to `Code/outputs/<task>/`.
 
-### **Dataset and Directory Structure**
+To use a custom dataset, follow the corresponding task's JSONL schema and filename conventions, add `Code/configs/<dataset>.py` exposing `dataset_config`, and select it with `--dataset <dataset>`.
 
-Now, let's reorganize the data structure. After successfully running an example script once, your `data/` directory should look like the following:
+## Citation
 
+```bibtex
+@article{zhang2026comfair,
+  title={Beyond Single-Attribute Auditing: A Configurable Multi-Attribute Benchmark for Intersectional Fairness in LLMs},
+  author={Zhang, Zheng and Wu, Yifan and Zhou, Yuxiang and Liu, Qi and Mao, Qingyang and Li, Ning and Gao, Weibo and Shi, Qiyuan and Huang, Zhenya and Yu, Baosheng},
+  journal={arXiv preprint arXiv:2610.35069},
+  year={2026},
+  url={https://arxiv.org/abs/2610.35069}
+}
 ```
-data/
-├── processed/              # Preprocessed data, i.e., the data we provide
-│   ├── recognition/
-│   ├── ...
-│   └── selection/
-└── results/
-    ├── predictions/        # Prediction results
-    └── reports/            # Reports
-```
 
-- `data/processed/`: Directory containing processed data organized by task:
-  - Subdirectories such as `continuation/`, `conversation/`, `recognition/`, `selection/`, etc., each holding dataset files required for the corresponding task (in JSON or JSONL format).
-- `data/results/`: Intermediate/final results generated during evaluation:
-  - `predictions/`: Model prediction outputs.
-  - `reports/`: Evaluation reports.
+## License
 
-## **Adding New Data or Configurations**
-
-You can follow the steps below to incorporate your own dataset for evaluation:
-
-- Add a new configuration file in `Code/configs/` (following a similar structure) and specify the new configuration file in the run script.
-- Align your dataset with the format of the dataset we provide.
+This repository is distributed under [CC BY 4.0](LICENSE).
